@@ -15,6 +15,7 @@
 #include <media/videobuf2-memops.h>
 #include <asm/cacheflush.h>
 #include <linux/firmware.h>
+#include <trace/events/mfc.h>
 
 #include "s5p_mfc_mem.h"
 
@@ -98,13 +99,14 @@ int s5p_mfc_mem_flush_vb(struct vb2_buffer *vb, u32 num_planes)
 	return 0;
 }
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 /* Allocate firmware */
 int s5p_mfc_alloc_firmware(struct s5p_mfc_dev *dev)
 {
 	unsigned int base_align;
 	size_t firmware_size;
-	void *alloc_ctx;
 	struct s5p_mfc_buf_size_v6 *buf_size;
+	void *alloc_ctx;
 
 	mfc_debug_enter();
 
@@ -123,6 +125,7 @@ int s5p_mfc_alloc_firmware(struct s5p_mfc_dev *dev)
 		return 0;
 
 	mfc_debug(2, "Allocating memory for firmware.\n");
+	trace_mfc_loadfw_start(dev->fw_region_size, firmware_size);
 
 	alloc_ctx = dev->alloc_ctx_fw;
 	dev->fw_info.alloc = s5p_mfc_mem_alloc_priv(alloc_ctx, dev->fw_region_size);
@@ -144,6 +147,7 @@ int s5p_mfc_alloc_firmware(struct s5p_mfc_dev *dev)
 
 	dev->fw_info.virt =
 		s5p_mfc_mem_vaddr_priv(dev->fw_info.alloc);
+
 	mfc_debug(2, "Virtual address for FW: %08lx\n",
 			(long unsigned int)dev->fw_info.virt);
 	if (!dev->fw_info.virt) {
@@ -206,7 +210,9 @@ int s5p_mfc_alloc_firmware(struct s5p_mfc_dev *dev)
 
 	return 0;
 }
+#endif
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 /* Load firmware to MFC */
 int s5p_mfc_load_firmware(struct s5p_mfc_dev *dev)
 {
@@ -261,6 +267,7 @@ int s5p_mfc_load_firmware(struct s5p_mfc_dev *dev)
 				dev->drm_fw_info.virt, 0, fw_blob->size);
 	}
 	release_firmware(fw_blob);
+	trace_mfc_loadfw_end(dev->fw_region_size, dev->fw_size);
 	mfc_debug_leave();
 	return 0;
 }
@@ -274,7 +281,6 @@ int s5p_mfc_release_firmware(struct s5p_mfc_dev *dev)
 		mfc_err("no mfc device to run\n");
 		return -EINVAL;
 	}
-
 	if (!dev->fw_info.alloc)
 		return -EINVAL;
 
@@ -287,10 +293,10 @@ int s5p_mfc_release_firmware(struct s5p_mfc_dev *dev)
 	}
 #endif
 	s5p_mfc_mem_free_priv(dev->fw_info.alloc);
-
 	dev->fw_info.virt =  0;
 	dev->fw_info.ofs = 0;
 	dev->fw_info.alloc = 0;
 
 	return 0;
 }
+#endif

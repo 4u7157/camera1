@@ -16,3 +16,10 @@ prompt "MFC version 10"
 	bool
 	depends on ARCH_EXYNOS7 || ARCH_EXYNOS8
 endchoice
+
+config EXYNOS_MFC_HRVC
+	bool "MFC HRVC mode"
+	default n
+	depends on VIDEO_EXYNOS_MFC
+	---help---
+	  MFC driver for HRVC mode

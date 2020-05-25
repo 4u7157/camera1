@@ -10,6 +10,7 @@
  * (at your option) any later version.
  */
 
+#include <trace/events/mfc.h>
 #include "s5p_mfc_cmd.h"
 
 int s5p_mfc_cmd_host2risc(struct s5p_mfc_dev *dev, int cmd,
@@ -17,13 +18,19 @@ int s5p_mfc_cmd_host2risc(struct s5p_mfc_dev *dev, int cmd,
 {
 	mfc_debug(2, "Issue the command: %d\n", cmd);
 	MFC_TRACE_DEV(">> Issue cmd : %d\n", cmd);
+	trace_mfc_frame_start(dev->curr_ctx, cmd, 0, 0);
 	/* Reset RISC2HOST command except nal q stop command */
 	if (cmd != S5P_FIMV_CH_STOP_QUEUE)
 		MFC_WRITEL(0x0, S5P_FIMV_RISC2HOST_CMD);
 
 	/* Issue the command */
 	MFC_WRITEL(cmd, S5P_FIMV_HOST2RISC_CMD);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	MFC_WRITEL(0x1, S5P_FIMV_HOST2RISC_INT);
+#else
+	mfc_debug(2, "%s command\n", dev->curr_ctx_drm ? "secure" : "normal");
+	hrvc_worker_queue(HRVC_CMD, dev->curr_ctx_drm);
+#endif
 
 	return 0;
 }
@@ -34,6 +41,9 @@ int s5p_mfc_sys_init_cmd(struct s5p_mfc_dev *dev,
 	struct s5p_mfc_buf_size_v6 *buf_size;
 	struct s5p_mfc_extra_buf *ctx_buf;
 	int ret;
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	dma_addr_t addr = 0;
+#endif
 
 	mfc_debug_enter();
 
@@ -48,7 +58,24 @@ int s5p_mfc_sys_init_cmd(struct s5p_mfc_dev *dev,
 	if (buf_type == MFCBUF_DRM)
 		ctx_buf = &dev->ctx_buf_drm;
 #endif
+
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	MFC_WRITEL(ctx_buf->ofs, S5P_FIMV_CONTEXT_MEM_ADDR);
+#else
+#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+	if (buf_type == MFCBUF_DRM)
+		addr = ctx_buf->phys;
+	else
+		addr = (dma_addr_t)ctx_buf->virt;
+#else
+	addr = (dma_addr_t)ctx_buf->virt;
+#endif
+
+	MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_CONTEXT_MEM_ADDR_UPPER);
+	MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_CONTEXT_MEM_ADDR);
+	mfc_debug(2, "COMMON CONTEXT address = %#llx\n", addr);
+#endif
+
 	MFC_WRITEL(buf_size->dev_ctx, S5P_FIMV_CONTEXT_MEM_SIZE);
 
 	ret = s5p_mfc_cmd_host2risc(dev, S5P_FIMV_H2R_CMD_SYS_INIT, NULL);
@@ -89,6 +116,9 @@ int s5p_mfc_open_inst_cmd(struct s5p_mfc_ctx *ctx)
 {
 	struct s5p_mfc_dev *dev;
 	int ret;
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	dma_addr_t addr = 0;
+#endif
 
 	mfc_debug_enter();
 
@@ -100,7 +130,23 @@ int s5p_mfc_open_inst_cmd(struct s5p_mfc_ctx *ctx)
 	mfc_debug(2, "Requested codec mode: %d\n", ctx->codec_mode);
 
 	MFC_WRITEL(ctx->codec_mode, S5P_FIMV_CODEC_TYPE);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	MFC_WRITEL(ctx->ctx.ofs, S5P_FIMV_CONTEXT_MEM_ADDR);
+#else
+#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+	if (ctx->is_drm)
+		addr = ctx->ctx.phys;
+	else
+		addr = (dma_addr_t)ctx->ctx.virt;
+#else
+	addr = (dma_addr_t)ctx->ctx.virt;
+#endif
+
+	MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_CONTEXT_MEM_ADDR_UPPER);
+	MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_CONTEXT_MEM_ADDR);
+	mfc_debug(2, "INSTANCE CONTEXT address = %#llx\n", addr);
+#endif
+
 	MFC_WRITEL(ctx->ctx_buf_size, S5P_FIMV_CONTEXT_MEM_SIZE);
 	if (ctx->type == MFCINST_DECODER)
 		MFC_WRITEL(ctx->dec_priv->crc_enable,
@@ -133,6 +179,7 @@ int s5p_mfc_close_inst_cmd(struct s5p_mfc_ctx *ctx)
 void s5p_mfc_init_memctrl(struct s5p_mfc_dev *dev,
 					enum mfc_buf_usage_type buf_type)
 {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	struct s5p_mfc_extra_buf *fw_info;
 
 	fw_info = &dev->fw_info;
@@ -141,13 +188,18 @@ void s5p_mfc_init_memctrl(struct s5p_mfc_dev *dev,
 		fw_info = &dev->drm_fw_info;
 
 	MFC_WRITEL(fw_info->ofs, S5P_FIMV_RISC_BASE_ADDRESS);
-	mfc_info_dev("[%d] Base Address : %08lx\n", buf_type, fw_info->ofs);
+#endif
 }
 
 int s5p_mfc_check_int_cmd(struct s5p_mfc_dev *dev)
 {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	if (MFC_READL(S5P_FIMV_RISC2HOST_INT))
 		return MFC_READL(S5P_FIMV_RISC2HOST_CMD);
+#else
+	if (MFC_SFR_READL(S5P_FIMV_INT_PEND))
+		return MFC_READL(S5P_FIMV_RISC2HOST_CMD);
+#endif
 	else
 		return 0;
 }

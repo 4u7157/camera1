@@ -33,6 +33,9 @@
 #include <soc/samsung/devfreq.h>
 #include <asm/cacheflush.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/mfc.h>
+
 #include "s5p_mfc_common.h"
 
 #include "s5p_mfc_intr.h"
@@ -76,10 +79,16 @@ static struct proc_dir_entry *mfc_proc_entry;
 #define MFC_PROC_FW_STATUS		"fw_status"
 #endif
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 #define MFC_SFR_AREA_COUNT	19
+#else
+#define MFC_SFR_AREA_COUNT	18
+#endif
+
 void s5p_mfc_dump_regs(struct s5p_mfc_dev *dev)
 {
 	int i;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	int addr[MFC_SFR_AREA_COUNT][2] = {
 		{ 0x0, 0x80 },
 		{ 0x1000, 0xCD0 },
@@ -101,7 +110,30 @@ void s5p_mfc_dump_regs(struct s5p_mfc_dev *dev)
 		{ 0xC000, 0x84 },
 		{ 0xD000, 0x74 },
 	};
+#else
+	int addr[MFC_SFR_AREA_COUNT][2] = {
+		{ 0x0, 0x80 },
+		{ 0x1000, 0xCD0 },
+		{ 0x2000, 0xA00 },
+		{ 0x3000, 0x40 },
+		{ 0x3110, 0x10 },
+		{ 0x5000, 0x100 },
+		{ 0x5200, 0x300 },
+		{ 0x5600, 0x100 },
+		{ 0x5800, 0x100 },
+		{ 0x5A00, 0x100 },
+		{ 0x6000, 0xC4 },
+		{ 0x7000, 0x21C },
+		{ 0x8000, 0x20C },
+		{ 0x9000, 0x10C },
+		{ 0xA000, 0x20C },
+		{ 0xB000, 0x444 },
+		{ 0xC000, 0x84 },
+		{ 0xD000, 0x74 },
+	};
+#endif
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	pr_err("-----------dumping MFC registers (SFR base = %pK, dev = %pK)\n",
 				dev->regs_base, dev);
 
@@ -114,6 +146,32 @@ void s5p_mfc_dump_regs(struct s5p_mfc_dev *dev)
 				addr[i][1], false);
 		printk("...\n");
 	}
+#else
+	pr_err("-----------dumping MFC registers (SFR base = %pK, dev = %pK)\n",
+				dev->sfr_base, dev);
+
+	/* Enable all FW clock gating */
+	MFC_SFR_WRITEL(0xFFFFFFFF, S5P_FIMV_MFC_FW_CLOCK);
+
+	for (i = 0; i < 2; i++) {
+		printk("[%04X .. %04X]\n", addr[i][0], addr[i][0] + addr[i][1]);
+		print_hex_dump(KERN_ERR, "", DUMP_PREFIX_ADDRESS, 32, 4, dev->sfr_base + addr[i][0],
+				addr[i][1], false);
+		printk("...\n");
+	}
+
+	printk("[%04X .. %04X]\n", 0xF000, 0xF000 + 0xFF8);
+	print_hex_dump(KERN_ERR, "", DUMP_PREFIX_ADDRESS, 32, 4, (void __iomem *)dev->vptr_regs_base,
+			0xFF8, false);
+	printk("...\n");
+
+	for (; i < MFC_SFR_AREA_COUNT; i++) {
+		printk("[%04X .. %04X]\n", addr[i][0], addr[i][0] + addr[i][1]);
+		print_hex_dump(KERN_ERR, "", DUMP_PREFIX_ADDRESS, 32, 4, dev->sfr_base + addr[i][0],
+				addr[i][1], false);
+		printk("...\n");
+	}
+#endif
 }
 
 static void s5p_mfc_disp_state(struct s5p_mfc_dev *dev)
@@ -153,9 +211,87 @@ int exynos_mfc_sysmmu_fault_handler(struct iommu_domain *iodmn, struct device *d
 		unsigned long addr, int id, void *param)
 {
 	struct s5p_mfc_dev *dev;
+	struct s5p_mfc_ctx *ctx;
 
 	dev = (struct s5p_mfc_dev *)param;
-	s5p_mfc_check_and_stop_hw(dev);
+	ctx = dev->ctx[dev->curr_ctx];
+
+#ifdef CONFIG_SOC_EXYNOS7570
+	if (dev->hw_lock == 0) {
+		mfc_info_dev("mfc hw isn't operating\n");
+		return 0;
+	}
+#endif
+
+	if (ctx) {
+		pr_err("-----------dumping MFC buffer info (fault at: %#lx)\n", addr);
+		pr_err("common:%#lx~%#lx, instance:%#lx~%#lx, codec:%#lx~%#lx\n",
+				dev->ctx_buf.ofs,
+				dev->ctx_buf.ofs + PAGE_ALIGN(0x7800),
+				ctx->ctx.ofs,
+				ctx->ctx.ofs + ctx->ctx_buf_size,
+				ctx->codec_buf_phys,
+				ctx->codec_buf_phys + ctx->codec_buf_size);
+		if (ctx->type == MFCINST_DECODER) {
+			pr_err("Decoder CPB:%#x++%#x, scratch:%#x++%#x, static(vp9):%#x++%#x\n",
+					MFC_READL(S5P_FIMV_D_CPB_BUFFER_ADDR),
+					MFC_READL(S5P_FIMV_D_CPB_BUFFER_SIZE),
+					MFC_READL(S5P_FIMV_D_SCRATCH_BUFFER_ADDR),
+					MFC_READL(S5P_FIMV_D_SCRATCH_BUFFER_SIZE),
+					MFC_READL(S5P_FIMV_D_STATIC_BUFFER_ADDR),
+					MFC_READL(S5P_FIMV_D_STATIC_BUFFER_SIZE));
+			pr_err("DPB [0]plane:++%#x, [1]plane:++%#x, [2]plane:++%#x, MV buffer:++%#x\n",
+					ctx->raw_buf.plane_size[0],
+					ctx->raw_buf.plane_size[1],
+					ctx->raw_buf.plane_size[2],
+					ctx->mv_size);
+			print_hex_dump(KERN_ERR, "[0] plane ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_D_FIRST_PLANE_DPB0,
+					0x100, false);
+			print_hex_dump(KERN_ERR, "[1] plane ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_D_SECOND_PLANE_DPB0,
+					0x100, false);
+			if (ctx->dst_fmt->num_planes == 3)
+				print_hex_dump(KERN_ERR, "[2] plane ", DUMP_PREFIX_ADDRESS, 32, 4,
+						dev->regs_base + S5P_FIMV_D_THIRD_PLANE_DPB0,
+						0x100, false);
+			print_hex_dump(KERN_ERR, "MV buffer ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_D_MV_BUFFER0,
+					0x100, false);
+		} else if (ctx->type == MFCINST_ENCODER) {
+			pr_err("Encoder SRC %dplane, [0]:%#x++%#x, [1]:%#x++%#x, [2]:%#x++%#x\n",
+					ctx->src_fmt->num_planes,
+					MFC_READL(S5P_FIMV_E_SOURCE_FIRST_ADDR),
+					ctx->raw_buf.plane_size[0],
+					MFC_READL(S5P_FIMV_E_SOURCE_SECOND_ADDR),
+					ctx->raw_buf.plane_size[1],
+					MFC_READL(S5P_FIMV_E_SOURCE_THIRD_ADDR),
+					ctx->raw_buf.plane_size[2]);
+			pr_err("DST:%#x++%#x, scratch:%#x++%#x\n",
+					MFC_READL(S5P_FIMV_E_STREAM_BUFFER_ADDR),
+					MFC_READL(S5P_FIMV_E_STREAM_BUFFER_SIZE),
+					MFC_READL(S5P_FIMV_E_SCRATCH_BUFFER_ADDR),
+					MFC_READL(S5P_FIMV_E_SCRATCH_BUFFER_SIZE));
+			pr_err("DPB [0] plane:++%#x, [1] plane:++%#x, ME buffer:++%#x\n",
+					(unsigned int)ctx->enc_priv->luma_dpb_size,
+					(unsigned int)ctx->enc_priv->chroma_dpb_size,
+					(unsigned int)ctx->enc_priv->me_buffer_size);
+			print_hex_dump(KERN_ERR, "[0] plane ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_E_LUMA_DPB,
+					0x44, false);
+			print_hex_dump(KERN_ERR, "[1] plane ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_E_CHROMA_DPB,
+					0x44, false);
+			print_hex_dump(KERN_ERR, "ME buffer ", DUMP_PREFIX_ADDRESS, 32, 4,
+					dev->regs_base + S5P_FIMV_E_ME_BUFFER,
+					0x44, false);
+		} else {
+			pr_err("invalid MFC instnace type(%d)\n", ctx->type);
+		}
+	}
+
+	s5p_mfc_disp_state(dev);
+	s5p_mfc_dump_regs(dev);
 
 	return 0;
 }
@@ -215,6 +351,11 @@ void s5p_mfc_watchdog(unsigned long arg)
 		atomic_inc(&dev->watchdog_cnt);
 	spin_unlock_irq(&dev->condlock);
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	if ((atomic_read(&dev->watchdog_cnt) == MFC_WATCHDOG_POLL_CNT)
+							&& dev->cmd_status)
+		MFC_SFR_WRITEL(0x1, S5P_FIMV_MFC_TIMEOUT_SIG);
+#endif
 	if (atomic_read(&dev->watchdog_cnt) >= MFC_WATCHDOG_CNT) {
 		/* This means that hw is busy and no interrupts were
 		 * generated by hw for the Nth time of running this
@@ -443,49 +584,6 @@ static inline enum s5p_mfc_node_type s5p_mfc_get_node_type(struct file *file)
 
 	return node_type;
 
-}
-
-static void mfc_handle_black_bar_info(struct s5p_mfc_dev *dev, struct s5p_mfc_ctx *ctx)
-{
-	struct v4l2_rect new_black_bar;
-	int black_bar_info;
-	struct s5p_mfc_dec *dec = ctx->dec_priv;
-
-	black_bar_info = s5p_mfc_get_black_bar_detection();
-	mfc_debug(3, "black bar type: %#x\n", black_bar_info);
-
-	if (black_bar_info == S5P_FIMV_DISP_STATUS_BLACK_BAR) {
-		new_black_bar.left = s5p_mfc_get_black_bar_pos_x();
-		new_black_bar.top = s5p_mfc_get_black_bar_pos_y();
-		new_black_bar.width = s5p_mfc_get_black_bar_image_w();
-		new_black_bar.height = s5p_mfc_get_black_bar_image_h();
-	} else if (black_bar_info == S5P_FIMV_DISP_STATUS_BLACK_SCREEN) {
-		new_black_bar.left = -1;
-		new_black_bar.top = -1;
-		new_black_bar.width = ctx->img_width;
-		new_black_bar.height = ctx->img_height;
-	} else if (black_bar_info == S5P_FIMV_DISP_STATUS_NOT_DETECTED) {
-		new_black_bar.left = 0;
-		new_black_bar.top = 0;
-		new_black_bar.width = ctx->img_width;
-		new_black_bar.height = ctx->img_height;
-	} else {
-		mfc_err_ctx("Not supported black bar type: %#x\n", black_bar_info);
-		dec->black_bar_updated = 0;
-		return;
-	}
-
-	if ((new_black_bar.left == dec->black_bar.left) &&
-			(new_black_bar.top == dec->black_bar.top) &&
-			(new_black_bar.width == dec->black_bar.width) &&
-			(new_black_bar.height == dec->black_bar.height)) {
-		mfc_debug(3, "black bar info was not changed\n");
-		dec->black_bar_updated = 0;
-		return;
-	}
-
-	dec->black_bar = new_black_bar;
-	dec->black_bar_updated = 1;
 }
 
 static void s5p_mfc_handle_frame_all_extracted(struct s5p_mfc_ctx *ctx)
@@ -776,11 +874,6 @@ static void s5p_mfc_handle_frame_new(struct s5p_mfc_ctx *ctx, unsigned int err)
 	if (CODEC_MBAFF(ctx))
 		is_mbaff = s5p_mfc_is_mbaff_picture();
 
-	if (FW_HAS_BLACK_BAR_DETECT(dev) && dec->detect_black_bar)
-		mfc_handle_black_bar_info(dev, ctx);
-	else
-		dec->black_bar_updated = 0;
-
 	/* Check whether syntax of video signal type is present or not */
 	is_video_signal_type = s5p_mfc_get_video_signal_type();
 	is_colour_description = s5p_mfc_get_colour_description();
@@ -872,10 +965,6 @@ static void s5p_mfc_handle_frame_new(struct s5p_mfc_ctx *ctx, unsigned int err)
 			mfc_debug(2, "is_interlace : %d interlace_type : %d, is_mbaff: %d, field: 0x%#x\n",
 					is_interlace, interlace_type, is_mbaff, dst_buf->vb.v4l2_buf.field);
 
-			if (dec->black_bar_updated) {
-				dst_buf->vb.v4l2_buf.reserved2 |= (1 << 5);
-				mfc_debug(3, "black bar detected\n");
-			}
 
 			if (is_video_signal_type) {
 				dst_buf->vb.v4l2_buf.reserved2 |= (1 << 4);
@@ -1393,8 +1482,28 @@ static inline void s5p_mfc_handle_error(struct s5p_mfc_ctx *ctx,
 	case MFCINST_INIT:
 		/* This error had to happen while acquireing instance */
 	case MFCINST_GOT_INST:
-		/* This error had to happen while parsing vps only */
-		if (err == S5P_FIMV_ERR_VPS_ONLY_ERROR) {
+		/* This error had to happen while parsing the header */
+		if (err == S5P_FIMV_ERR_NO_KEY_FRAME) {
+			if (!list_empty(&ctx->src_queue)) {
+				src_buf = list_entry(ctx->src_queue.next,
+						struct s5p_mfc_buf, list);
+				index = src_buf->vb.v4l2_buf.index;
+				list_del(&src_buf->list);
+				ctx->src_queue_cnt--;
+				/* decoder src buffer CFW UNPROT */
+				if (ctx->is_drm) {
+					if (test_bit(index, &ctx->stream_protect_flag)) {
+						if (s5p_mfc_stream_buf_prot(ctx, src_buf, false))
+							mfc_err_ctx("failed to CFW_UNPROT\n");
+						else
+							clear_bit(index, &ctx->stream_protect_flag);
+					}
+					mfc_debug(2, "[%d] dec src buf un-prot_flag: %#lx\n",
+							index, ctx->stream_protect_flag);
+				}
+				vb2_buffer_done(&src_buf->vb, VB2_BUF_STATE_DONE);
+			}
+		} else if (err == S5P_FIMV_ERR_VPS_ONLY_ERROR) {
 			s5p_mfc_change_state(ctx, MFCINST_VPS_PARSED_ONLY);
 			if (!list_empty(&ctx->src_queue)) {
 				src_buf = list_entry(ctx->src_queue.next,
@@ -1500,8 +1609,12 @@ static irqreturn_t s5p_mfc_top_half_irq(int irq, void *priv)
 {
 	struct s5p_mfc_dev *dev = priv;
 	struct s5p_mfc_ctx *ctx;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	unsigned int err;
 	unsigned int reason;
+#else
+	unsigned int val;
+#endif
 
 	ctx = dev->ctx[dev->curr_ctx];
 	if (!ctx) {
@@ -1509,6 +1622,7 @@ static irqreturn_t s5p_mfc_top_half_irq(int irq, void *priv)
 		return IRQ_WAKE_THREAD;
 	}
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	reason = s5p_mfc_get_int_reason();
 	err = s5p_mfc_get_int_err();
 	mfc_debug(2, "[c:%d] Int reason: %d (err: %d)\n",
@@ -1516,10 +1630,25 @@ static irqreturn_t s5p_mfc_top_half_irq(int irq, void *priv)
 	MFC_TRACE_CTX("<< Int reason(top): %d\n", reason);
 
 	return IRQ_WAKE_THREAD;
+#else
+	/* Interrupt clear routine */
+	val = MFC_SFR_READL(S5P_FIMV_INT_SRC);
+	MFC_SFR_WRITEL(val, S5P_FIMV_INT_SRC_COPY);
+	MFC_SFR_WRITEL(val, S5P_FIMV_INT_CLEAR);
+	MFC_SFR_WRITEL(0, S5P_FIMV_INT_CLEAR);
+
+	hrvc_worker_queue(HRVC_INT, dev->ctx[dev->curr_ctx]->is_drm);
+
+	return IRQ_HANDLED;
+#endif
 }
 
 /* Interrupt processing */
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 static irqreturn_t s5p_mfc_irq(int irq, void *priv)
+#else
+int s5p_mfc_irq(int irq, void *priv)
+#endif
 {
 	struct s5p_mfc_dev *dev = priv;
 	struct s5p_mfc_buf *src_buf;
@@ -1617,6 +1746,7 @@ static irqreturn_t s5p_mfc_irq(int irq, void *priv)
 
 	dev->preempt_ctx = MFC_NO_INSTANCE_SET;
 	dev->continue_ctx = MFC_NO_INSTANCE_SET;
+	trace_mfc_frame_bottom(dev->curr_ctx, reason, ctx->type, ctx->is_drm);
 
 	switch (reason) {
 	case S5P_FIMV_R2H_CMD_ERR_RET:
@@ -1829,7 +1959,11 @@ irq_done:
 
 irq_end:
 	mfc_debug_leave();
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	return IRQ_HANDLED;
+#else
+	return 0;
+#endif
 }
 
 static inline int is_decoder_node(enum s5p_mfc_node_type node)
@@ -1975,23 +2109,38 @@ static int s5p_mfc_open(struct file *file)
 					msecs_to_jiffies(MFC_WATCHDOG_INTERVAL);
 		add_timer(&dev->watchdog_timer);
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (!dev->fw_status) {
 			ret = s5p_mfc_alloc_firmware(dev);
 			if (ret)
 				goto err_fw_alloc;
 			dev->fw_status = 1;
 		}
+
 		ret = s5p_mfc_load_firmware(dev);
 		if (ret)
 			goto err_fw_load;
-
+#else
+		/* ldfw should be loaded before libfw */
+		ret = hrvc_load_ldfw();
+		if (ret != 0) {
+			mfc_err_dev("Secure firmware loading is failed.\n");
+			goto err_fw_load;
+		}
+		ret = hrvc_load_libfw();
+		if (ret != 0) {
+			mfc_err_dev("Normal firmware loading is failed.\n");
+			goto err_fw_load;
+		}
+#endif
 		/* Check for supporting smc */
+		trace_mfc_dcpp_start(ctx->num, dev->is_support_smc, dev->drm_fw_status);
 		ret = exynos_smc(SMC_DCPP_SUPPORT, 0, 0, 0);
 		if (ret != DRMDRV_OK) {
 			dev->is_support_smc = 0;
-			mfc_err_ctx("Does not support DCPP(%#x)\n", ret);
 		} else {
 			dev->is_support_smc = 1;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 			if (!dev->drm_fw_info.ofs) {
 				mfc_err_ctx("DRM F/W buffer is not allocated.\n");
 				dev->drm_fw_status = 0;
@@ -2025,8 +2174,10 @@ static int s5p_mfc_open(struct file *file)
 					}
 				}
 			}
+#endif
 		}
 #else
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		/* Load the FW */
 		if (!dev->fw_status) {
 			ret = s5p_mfc_alloc_firmware(dev);
@@ -2034,12 +2185,16 @@ static int s5p_mfc_open(struct file *file)
 				goto err_fw_alloc;
 			dev->fw_status = 1;
 		}
-
 		ret = s5p_mfc_load_firmware(dev);
+#else
+		ret = hrvc_load_libfw();
+#endif
 		if (ret)
 			goto err_fw_load;
 
 #endif
+		trace_mfc_dcpp_end(ctx->num, dev->is_support_smc, dev->drm_fw_status);
+
 		ret = s5p_mfc_alloc_dev_context_buffer(dev);
 		if (ret)
 			goto err_fw_load;
@@ -2070,6 +2225,7 @@ static int s5p_mfc_open(struct file *file)
 #endif
 	}
 
+	trace_mfc_node_open(ctx->num, dev->num_inst, ctx->type, ctx->is_drm);
 	mfc_info_ctx("MFC open completed [%d:%d] version = %d\n",
 			dev->num_drm_inst, dev->num_inst, MFC_DRIVER_INFO);
 	mutex_unlock(&dev->mfc_mutex);
@@ -2085,23 +2241,26 @@ err_pwr_enable:
 err_fw_load:
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 	if (dev->drm_fw_status) {
-		int smc_ret = 0;
 		dev->is_support_smc = 0;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		dev->drm_fw_status = 0;
 		if (IS_MFCv10X(dev)) {
-			smc_ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
+			ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 					dev->drm_fw_info.phys,
 					dev->fw_region_size,
 					ION_EXYNOS_HEAP_ID_VIDEO_FW);
-			if (smc_ret != DRMDRV_OK)
-				mfc_err_ctx("failed MFC DRM F/W unprot(%#x)\n", smc_ret);
+			if (ret != DRMDRV_OK)
+				mfc_err_ctx("failed MFC DRM F/W unprot(%#x)\n", ret);
 		}
+#endif
 	}
 #endif
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	s5p_mfc_release_firmware(dev);
 	dev->fw_status = 0;
 
 err_fw_alloc:
+#endif
 	del_timer_sync(&dev->watchdog_timer);
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 	if (ctx->is_drm)
@@ -2237,14 +2396,68 @@ static int s5p_mfc_release(struct file *file)
 
 		/* Wait until instance is returned or timeout occured */
 		if (s5p_mfc_wait_for_done_ctx(ctx,
-				S5P_FIMV_R2H_CMD_CLOSE_INSTANCE_RET) == 1) {
-			mfc_err_ctx("It was expired to wait for a CLOSE_INSTANCE\n");
+				S5P_FIMV_R2H_CMD_CLOSE_INSTANCE_RET)) {
+			mfc_err_ctx("Waiting for CLOSE_INSTANCE timed out\n");
+			dev->curr_ctx_drm = ctx->is_drm;
+			set_bit(ctx->num, &dev->hw_lock);
+			s5p_mfc_clock_on(dev);
+			s5p_mfc_close_inst(ctx);
 			if (s5p_mfc_wait_for_done_ctx(ctx,
-					S5P_FIMV_R2H_CMD_CLOSE_INSTANCE_RET)) {
-				mfc_err_ctx("It was once more expired. stop H/W\n");
-				s5p_mfc_check_and_stop_hw(dev);
+				S5P_FIMV_R2H_CMD_CLOSE_INSTANCE_RET)) {
+				mfc_err_ctx("Abnormal h/w state.\n");
+
+				/* cleanup for the next open */
+				if (dev->curr_ctx == ctx->num)
+					clear_bit(ctx->num, &dev->hw_lock);
+				if (ctx->is_drm)
+					dev->num_drm_inst--;
+				dev->num_inst--;
+
+				mfc_info_dev("Failed to release MFC inst[%d:%d]\n",
+						dev->num_drm_inst, dev->num_inst);
+
+				if (dev->num_inst == 0) {
+					s5p_mfc_deinit_hw(dev);
+					del_timer_sync(&dev->watchdog_timer);
+
+					flush_workqueue(dev->sched_wq);
+
+					s5p_mfc_clock_off(dev);
+					mfc_debug(2, "power off\n");
+					s5p_mfc_power_off(dev);
+
+					s5p_mfc_release_dev_context_buffer(dev);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
+					dev->drm_fw_status = 0;
+#endif
+
+#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+					dev->is_support_smc = 0;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
+					if (IS_MFCv10X(dev)) {
+						ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
+								dev->drm_fw_info.phys,
+								dev->fw_region_size,
+								ION_EXYNOS_HEAP_ID_VIDEO_FW);
+						if (ret != DRMDRV_OK) {
+							mfc_err_ctx("failed MFC DRM F/W unprot(%#x)\n",
+									ret);
+							goto err_release;
+						}
+					}
+#endif
+#endif
+				} else {
+					s5p_mfc_clock_off(dev);
+				}
+
+
+				mutex_unlock(&dev->mfc_mutex);
+
+				return -EIO;
 			}
 		}
+
 		ctx->inst_no = MFC_NO_INSTANCE_SET;
 	}
 	/* hardware locking scheme */
@@ -2265,10 +2478,13 @@ static int s5p_mfc_release(struct file *file)
 		s5p_mfc_power_off(dev);
 
 		s5p_mfc_release_dev_context_buffer(dev);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		dev->drm_fw_status = 0;
+#endif
 
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 		dev->is_support_smc = 0;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (IS_MFCv10X(dev)) {
 			ret = exynos_smc(SMC_DRM_SECBUF_UNPROT,
 					dev->drm_fw_info.phys,
@@ -2280,6 +2496,7 @@ static int s5p_mfc_release(struct file *file)
 				goto err_release;
 			}
 		}
+#endif
 #endif
 
 #ifdef NAL_Q_ENABLE
@@ -2316,6 +2533,7 @@ static int s5p_mfc_release(struct file *file)
 	spin_lock_irq(&dev->condlock);
 	clear_bit(ctx->num, &dev->ctx_stop_bits);
 	spin_unlock_irq(&dev->condlock);
+	trace_mfc_node_close(ctx->num, dev->num_inst, ctx->type, ctx->is_drm);
 
 	dev->ctx[ctx->num] = 0;
 	kfree(ctx);
@@ -2467,6 +2685,9 @@ static void mfc_parse_dt(struct device_node *np, struct s5p_mfc_dev *mfc)
 #endif
 }
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+extern struct vm_struct vm_mfc_fw;
+#endif
 /* MFC probe function */
 static int s5p_mfc_probe(struct platform_device *pdev)
 {
@@ -2474,10 +2695,15 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 	struct video_device *vfd;
 	struct resource *res;
 	int ret = -ENOENT;
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	int page_size, i;
+	struct page *page;
+	struct page **pages;
+#else
 #ifdef CONFIG_MFC_USE_BUS_DEVFREQ
 	int i;
 #endif
-
+#endif
 	dev_dbg(&pdev->dev, "%s()\n", __func__);
 	dev = devm_kzalloc(&pdev->dev, sizeof(struct s5p_mfc_dev), GFP_KERNEL);
 	if (!dev) {
@@ -2536,6 +2762,7 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		ret = -ENOENT;
 		goto err_req_mem;
 	}
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	dev->regs_base = ioremap(dev->mfc_mem->start,
 				resource_size(dev->mfc_mem));
 	if (dev->regs_base == NULL) {
@@ -2543,6 +2770,15 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		ret = -ENOENT;
 		goto err_ioremap;
 	}
+#else
+	dev->sfr_base = ioremap(dev->mfc_mem->start,
+				resource_size(dev->mfc_mem));
+	if (dev->sfr_base == NULL) {
+		dev_err(&pdev->dev, "failed to ioremap address region\n");
+		ret = -ENOENT;
+		goto err_ioremap;
+	}
+#endif
 
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (res == NULL) {
@@ -2551,8 +2787,13 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		goto err_res_irq;
 	}
 	dev->irq = res->start;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	ret = request_threaded_irq(dev->irq, s5p_mfc_top_half_irq, s5p_mfc_irq,
 				IRQF_ONESHOT, pdev->name, dev);
+#else
+	ret = request_threaded_irq(dev->irq, s5p_mfc_top_half_irq, NULL,
+				IRQF_ONESHOT, pdev->name, dev);
+#endif
 	if (ret != 0) {
 		dev_err(&pdev->dev, "failed to install irq (%d)\n", ret);
 		goto err_req_irq;
@@ -2730,6 +2971,7 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 	}
 #endif
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	dev->alloc_ctx_fw = (struct vb2_alloc_ctx *)
 		vb2_ion_create_context(&pdev->dev,
 			IS_MFCV6(dev) ? SZ_4K : SZ_128K,
@@ -2739,8 +2981,37 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		ret = PTR_ERR(dev->alloc_ctx_fw);
 		goto alloc_ctx_fw_fail;
 	}
+#endif
+
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	dev->alloc_ctx_hrvc = (struct vb2_alloc_ctx *)
+		vb2_ion_create_context(&pdev->dev,
+			SZ_4K,
+			VB2ION_CTX_UNCACHED | VB2ION_CTX_DRM_STREAM);
+	if (IS_ERR(dev->alloc_ctx_hrvc)) {
+		mfc_err_dev("failed to prepare DRM allocation context\n");
+		ret = PTR_ERR(dev->alloc_ctx_hrvc);
+		goto alloc_ctx_hrvc_fail;
+	}
+
+	/* shared buf allocation */
+	dev->shared_alloc = s5p_mfc_mem_alloc_priv(dev->alloc_ctx_hrvc, SZ_64K);
+	if (IS_ERR(dev->shared_alloc)) {
+		dev->shared_alloc = NULL;
+		mfc_err_dev("allocating shared buffer failed\n");
+		goto alloc_shared_fail;
+	}
+
+	dev->vptr_regs_base = (unsigned int *)s5p_mfc_mem_vaddr_priv(dev->shared_alloc);
+	dev->pptr_regs_base = (unsigned int *)s5p_mfc_mem_phys_addr(dev->shared_alloc);
+	dev->regs_base = (void __iomem *)dev->vptr_regs_base - S5P_FIMV_REG_OFFSET;
+
+	mfc_debug(2, "vptr_regs_base : 0x%lx pptr_regs_base : 0x%lx \n",
+			(unsigned long int)dev->vptr_regs_base, (unsigned long int)dev->pptr_regs_base);
+#endif
 
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	dev->alloc_ctx_drm_fw = (struct vb2_alloc_ctx *)
 		vb2_ion_create_context(&pdev->dev,
 			IS_MFCV6(dev) ? SZ_4K : SZ_128K,
@@ -2750,10 +3021,11 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 		ret = PTR_ERR(dev->alloc_ctx_drm_fw);
 		goto alloc_ctx_drm_fw_fail;
 	}
+#endif
 	dev->alloc_ctx_drm = (struct vb2_alloc_ctx *)
 		vb2_ion_create_context(&pdev->dev,
 			SZ_4K,
-			VB2ION_CTX_UNCACHED | VB2ION_CTX_DRM_VIDEO | VB2ION_CTX_IOMMU);
+			VB2ION_CTX_UNCACHED | VB2ION_CTX_DRM_VIDEO);
 	if (IS_ERR(dev->alloc_ctx_drm)) {
 		mfc_err_dev("failed to prepare DRM allocation context\n");
 		ret = PTR_ERR(dev->alloc_ctx_drm);
@@ -2781,6 +3053,23 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 				dev->pdata->qos_table[i].freq_mif);
 	}
 #endif
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	page_size = vm_mfc_fw.size / PAGE_SIZE;
+	pages = kzalloc(sizeof(struct page *) * page_size, GFP_KERNEL);
+	page = phys_to_page(vm_mfc_fw.phys_addr);
+
+	for (i = 0; i < page_size; i++)
+		pages[i] = page++;
+
+	ret = map_vm_area(&vm_mfc_fw, PAGE_KERNEL, pages);
+	if (ret) {
+		mfc_err_dev("Memory area mapping fail \n");
+		goto va_mapping_fail;
+	}
+	mfc_info_dev("Fixed region allocation success\n");
+
+	kfree(pages);
+#endif
 
 	iovmm_set_fault_handler(dev->device,
 		exynos_mfc_sysmmu_fault_handler, dev);
@@ -2793,17 +3082,31 @@ static int s5p_mfc_probe(struct platform_device *pdev)
 	return 0;
 
 /* Deinit MFC if probe had failed */
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+va_mapping_fail:
+#endif
 #ifdef CONFIG_MFC_USE_BUS_DEVFREQ
+	kfree(dev->qos_req_cnt);
 err_qos_cnt:
 #endif
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 	vb2_ion_destroy_context(dev->alloc_ctx_drm);
 alloc_ctx_sh_fail:
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	vb2_ion_destroy_context(dev->alloc_ctx_drm_fw);
 alloc_ctx_drm_fw_fail:
 #endif
+#endif
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	s5p_mfc_mem_free_priv(dev->shared_alloc);
+alloc_shared_fail:
+	vb2_ion_destroy_context(dev->alloc_ctx_hrvc);
+alloc_ctx_hrvc_fail:
+#endif
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	vb2_ion_destroy_context(dev->alloc_ctx_fw);
 alloc_ctx_fw_fail:
+#endif
 #ifdef CONFIG_ION_EXYNOS
 	ion_client_destroy(dev->mfc_ion_client);
 err_ion_client:
@@ -2832,7 +3135,11 @@ err_v4l2_dev:
 	free_irq(dev->irq, dev);
 err_req_irq:
 err_res_irq:
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	iounmap(dev->regs_base);
+#else
+	iounmap(dev->sfr_base);
+#endif
 err_ioremap:
 	release_mem_region(dev->mfc_mem->start, resource_size(dev->mfc_mem));
 err_req_mem:
@@ -2864,7 +3171,9 @@ static int s5p_mfc_remove(struct platform_device *pdev)
 	remove_proc_entry(MFC_PROC_ROOT, NULL);
 	vb2_ion_destroy_context(dev->alloc_ctx_drm);
 #endif
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	vb2_ion_destroy_context(dev->alloc_ctx_fw);
+#endif
 #ifdef CONFIG_ION_EXYNOS
 	ion_client_destroy(dev->mfc_ion_client);
 #endif
@@ -2872,7 +3181,13 @@ static int s5p_mfc_remove(struct platform_device *pdev)
 	s5p_mfc_deinit_hw(dev);
 	vb2_ion_destroy_context(dev->alloc_ctx);
 	free_irq(dev->irq, dev);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	iounmap(dev->regs_base);
+#else
+	iounmap(dev->sfr_base);
+	s5p_mfc_mem_free_priv(dev->shared_alloc);
+	vb2_ion_destroy_context(dev->alloc_ctx_hrvc);
+#endif
 	release_mem_region(dev->mfc_mem->start, resource_size(dev->mfc_mem));
 	s5p_mfc_final_pm(dev);
 	kfree(dev);
@@ -2912,10 +3227,6 @@ static int s5p_mfc_resume(struct device *dev)
 	if (m_dev->num_inst == 0)
 		return 0;
 
-	ret = exynos_smc(MC_FC_SET_CFW_PROT, 0, 0, 0);
-	if (ret != SMC_CFW_OK)
-		mfc_err("failed to enable MFC CFW early. ret: 0x%x\n", ret);
-
 	ret = s5p_mfc_wakeup(m_dev);
 
 	return ret;
@@ -2948,11 +3259,6 @@ static int s5p_mfc_runtime_resume(struct device *dev)
 {
 	struct s5p_mfc_dev *m_dev = platform_get_drvdata(to_platform_device(dev));
 	int pre_power;
-	uint32_t ret;
-
-	ret = exynos_smc(MC_FC_SET_CFW_PROT, 0, 0, 0);
-	if (ret != SMC_CFW_OK)
-		mfc_err("failed to enable MFC CFW early. ret: 0x%x\n", ret);
 
 	if (!m_dev) {
 		mfc_err("no mfc device to run\n");
@@ -2989,7 +3295,7 @@ struct s5p_mfc_buf_size_v5 mfc_buf_size_v5 = {
 struct s5p_mfc_buf_size_v6 mfc_buf_size_v6 = {
 	.dev_ctx	= PAGE_ALIGN(0x7800),	/*  30KB */
 	.h264_dec_ctx	= PAGE_ALIGN(0x200000),	/* 1.6MB */
-	.other_dec_ctx	= PAGE_ALIGN(0x5000),	/*  20KB */
+	.other_dec_ctx	= PAGE_ALIGN(0x5400),	/*  21KB */
 	.h264_enc_ctx	= PAGE_ALIGN(0x19000),	/* 100KB */
 	.hevc_enc_ctx	= PAGE_ALIGN(0x7800),	/*  30KB */
 	.other_enc_ctx	= PAGE_ALIGN(0x3C00),	/*  15KB */
@@ -3080,7 +3386,7 @@ static struct platform_driver s5p_mfc_driver = {
 		.owner	= THIS_MODULE,
 		.pm	= &s5p_mfc_pm_ops,
 		.of_match_table = exynos_mfc_match,
-		.suppress_bind_attrs = true,
+		.suppress_bind_attrs = true,		
 	},
 };
 

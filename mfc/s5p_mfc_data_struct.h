@@ -171,6 +171,7 @@ struct s5p_mfc_buf {
 	int already;
 	int consumed;
 	unsigned char *vir_addr;
+	unsigned char *phy_addr;
 };
 
 struct s5p_mfc_pm {
@@ -257,6 +258,13 @@ struct s5p_mfc_dev {
 #endif
 
 	void __iomem		*regs_base;
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	unsigned int		*vptr_regs_base;
+	unsigned int		*pptr_regs_base;
+	void __iomem		*sfr_base;
+	struct vb2_alloc_ctx	*alloc_ctx_hrvc;
+	void			*shared_alloc;
+#endif
 	int			irq;
 	struct resource		*mfc_mem;
 
@@ -270,7 +278,9 @@ struct s5p_mfc_dev {
 	spinlock_t condlock;
 
 	struct mutex mfc_mutex;
-
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	int cmd_status;
+#endif
 	int int_cond;
 	int int_type;
 	unsigned int int_err;
@@ -310,8 +320,10 @@ struct s5p_mfc_dev {
 	int num_drm_inst;
 	struct s5p_mfc_extra_buf fw_info;
 	struct s5p_mfc_extra_buf drm_fw_info;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	struct vb2_alloc_ctx *alloc_ctx_fw;
 	struct vb2_alloc_ctx *alloc_ctx_drm_fw;
+#endif
 	struct vb2_alloc_ctx *alloc_ctx_drm;
 
 	struct workqueue_struct *sched_wq;
@@ -770,10 +782,6 @@ struct s5p_mfc_dec {
 	int internal_dpb;
 	int cr_left, cr_right, cr_top, cr_bot;
 
-	int detect_black_bar;
-	bool black_bar_updated;
-	struct v4l2_rect black_bar;
-
 	/* For 6.x */
 	int remained;
 
@@ -798,11 +806,6 @@ struct s5p_mfc_dec {
 	int is_10bit;
 
 	unsigned int err_reuse_flag;
-
-	/* for debugging about black bar detection */
-	void *frame_vaddr[3][30];
-	unsigned int frame_size[3][30];
-	unsigned char frame_cnt;
 };
 
 struct s5p_mfc_enc {

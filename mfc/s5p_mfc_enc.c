@@ -2091,9 +2091,6 @@ static int enc_ext_info(struct s5p_mfc_ctx *ctx)
 	if (FW_HAS_ROI_CONTROL(dev))
 		val |= ENC_SET_ROI_CONTROL;
 
-	if (FW_HAS_FIXED_SLICE(dev))
-		val |= ENC_SET_FIXED_SLICE;
-
 	val |= ENC_SET_QP_BOUND_PB;
 
 	return val;
@@ -3678,6 +3675,14 @@ static void s5p_mfc_buf_queue(struct vb2_buffer *vb)
 				s5p_mfc_mem_plane_addr(ctx, vb, 0),
 				buf->planes.stream);
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+		if (ctx->is_drm) {
+			buf->phy_addr = (unsigned char *)s5p_mfc_mem_phys_addr(vb2_plane_cookie(vb, 0));
+		} else {
+			buf->vir_addr = vb2_plane_vaddr(vb, 0);
+			s5p_mfc_mem_inv_vb(vb, 1);
+		}
+#endif
 		/* Mark destination as available for use by MFC */
 		spin_lock_irqsave(&dev->irqlock, flags);
 		list_add_tail(&buf->list, &ctx->dst_queue);

@@ -48,10 +48,17 @@ static inline void s5p_mfc_clear_cmds(struct s5p_mfc_dev *dev)
 	}
 }
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 #define s5p_mfc_clear_int_flags()				\
 	do {							\
 		MFC_WRITEL(0, S5P_FIMV_RISC2HOST_CMD);	\
 		MFC_WRITEL(0, S5P_FIMV_RISC2HOST_INT);	\
 	} while (0)
+#else
+#define s5p_mfc_clear_int_flags()				\
+	do {							\
+		MFC_WRITEL(0, S5P_FIMV_RISC2HOST_CMD);	\
+	} while (0)
+#endif
 
 #endif /* __S5P_MFC_CMD_H */

@@ -1699,9 +1699,6 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 	case V4L2_CID_MPEG_MFC_SET_BUF_PROCESS_TYPE:
 		ctx->buf_process_type = ctrl->value;
 		break;
-	case V4L2_CID_MPEG_VIDEO_BLACK_BAR_DETECT:
-		dec->detect_black_bar = ctrl->value;
-		break;
 	default:
 		list_for_each_entry(ctx_ctrl, &ctx->ctrls, list) {
 			if (!(ctx_ctrl->type & MFC_CTRL_TYPE_SET))
@@ -1767,41 +1764,26 @@ static int vidioc_g_crop(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
-	if (ctx->state == MFCINST_RUNNING && dec->detect_black_bar
-			&& dec->black_bar_updated) {
-		cr->c.left = dec->black_bar.left;
-		cr->c.top = dec->black_bar.top;
-		cr->c.width = dec->black_bar.width;
-		cr->c.height = dec->black_bar.height;
-		mfc_debug(2, "black bar info: l=%d t=%d w=%d h=%d\n",
-				dec->black_bar.left,
-				dec->black_bar.top,
-				dec->black_bar.width,
-				dec->black_bar.height);
+	if (ctx->src_fmt->fourcc == V4L2_PIX_FMT_H264 ||
+			ctx->src_fmt->fourcc == V4L2_PIX_FMT_HEVC) {
+		cr->c.left = dec->cr_left;
+		cr->c.top = dec->cr_top;
+		cr->c.width = ctx->img_width - dec->cr_left - dec->cr_right;
+		cr->c.height = ctx->img_height - dec->cr_top - dec->cr_bot;
+		mfc_debug(2, "Cropping info [h264]: l=%d t=%d "	\
+			"w=%d h=%d (r=%d b=%d fw=%d fh=%d)\n",
+			dec->cr_left, dec->cr_top, cr->c.width, cr->c.height,
+			dec->cr_right, dec->cr_bot,
+			ctx->buf_width, ctx->buf_height);
 	} else {
-		if (ctx->src_fmt->fourcc == V4L2_PIX_FMT_H264 ||
-				ctx->src_fmt->fourcc == V4L2_PIX_FMT_HEVC) {
-			cr->c.left = dec->cr_left;
-			cr->c.top = dec->cr_top;
-			cr->c.width = ctx->img_width - dec->cr_left - dec->cr_right;
-			cr->c.height = ctx->img_height - dec->cr_top - dec->cr_bot;
-			mfc_debug(2, "Cropping info [h264]: l=%d t=%d "	\
-					"w=%d h=%d (r=%d b=%d fw=%d fh=%d)\n",
-					dec->cr_left, dec->cr_top,
-					cr->c.width, cr->c.height,
-					dec->cr_right, dec->cr_bot,
-					ctx->buf_width, ctx->buf_height);
-		} else {
-			cr->c.left = 0;
-			cr->c.top = 0;
-			cr->c.width = ctx->img_width;
-			cr->c.height = ctx->img_height;
-			mfc_debug(2, "Cropping info: w=%d h=%d fw=%d fh=%d\n",
-					cr->c.width, cr->c.height,
-					ctx->buf_width,	ctx->buf_height);
-		}
+		cr->c.left = 0;
+		cr->c.top = 0;
+		cr->c.width = ctx->img_width;
+		cr->c.height = ctx->img_height;
+		mfc_debug(2, "Cropping info: w=%d h=%d fw=%d "
+			"fh=%d\n", cr->c.width,	cr->c.height, ctx->buf_width,
+							ctx->buf_height);
 	}
-
 	mfc_debug_leave();
 	return 0;
 }
@@ -2506,10 +2488,19 @@ static void s5p_mfc_buf_queue(struct vb2_buffer *vb)
 		mfc_debug(2, "Adding to src: %p (0x%08llx, 0x%08llx)\n", vb,
 				s5p_mfc_mem_plane_addr(ctx, vb, 0),
 				buf->planes.stream);
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (ctx->state < MFCINST_HEAD_PARSED && !ctx->is_drm) {
 			stream_vir = vb2_plane_vaddr(vb, 0);
 			s5p_mfc_mem_inv_vb(vb, 1);
 		}
+#else
+		if (ctx->is_drm) {
+			buf->phy_addr = (unsigned char *)s5p_mfc_mem_phys_addr(vb2_plane_cookie(vb, 0));
+		} else {
+			stream_vir = vb2_plane_vaddr(vb, 0);
+			s5p_mfc_mem_inv_vb(vb, 1);
+		}
+#endif
 		spin_lock_irqsave(&dev->irqlock, flags);
 		list_add_tail(&buf->list, &ctx->src_queue);
 		ctx->src_queue_cnt++;

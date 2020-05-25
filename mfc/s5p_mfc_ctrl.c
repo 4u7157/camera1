@@ -29,7 +29,11 @@ static inline int s5p_mfc_bus_reset(struct s5p_mfc_dev *dev)
 	unsigned long timeout;
 
 	/* Reset */
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	MFC_WRITEL(0x1, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#else
+	MFC_SFR_WRITEL(0x1, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#endif
 
 	timeout = jiffies + msecs_to_jiffies(MFC_BW_TIMEOUT);
 	/* Check bus status */
@@ -38,7 +42,11 @@ static inline int s5p_mfc_bus_reset(struct s5p_mfc_dev *dev)
 			mfc_err_dev("Timeout while resetting MFC.\n");
 			return -EIO;
 		}
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		status = MFC_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
+#else
+		status = MFC_SFR_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
+#endif
 	} while ((status & 0x2) == 0);
 
 	return 0;
@@ -76,10 +84,15 @@ static int s5p_mfc_reset(struct s5p_mfc_dev *dev)
 		if (IS_MFCv6X(dev))
 			if (s5p_mfc_bus_reset(dev))
 				return -EIO;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (!IS_MFCV8(dev))
 			MFC_WRITEL(0, S5P_FIMV_RISC_ON);
 		MFC_WRITEL(0x1FFF, S5P_FIMV_MFC_RESET);
 		MFC_WRITEL(0, S5P_FIMV_MFC_RESET);
+#else
+		MFC_SFR_WRITEL(0x1FFF, S5P_FIMV_MFC_RESET);
+		MFC_SFR_WRITEL(0, S5P_FIMV_MFC_RESET);
+#endif
 	} else {
 		MFC_WRITEL(0x3f6, S5P_FIMV_SW_RESET);	/*  reset RISC */
 		MFC_WRITEL(0x3e2, S5P_FIMV_SW_RESET);	/*  All reset except for MC */
@@ -148,8 +161,10 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 	curr_ctx_backup = dev->curr_ctx_drm;
 	dev->sys_init_status = 0;
 	/* RMVME: */
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	if (!dev->fw_info.alloc)
 		return -EINVAL;
+#endif
 
 	/* 0. MFC reset */
 	mfc_debug(2, "MFC reset...\n");
@@ -177,12 +192,14 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 
 	/* 1. Set DRAM base Addr */
 	s5p_mfc_init_memctrl(dev, buf_type);
+	mfc_info_dev("[%d] Base Address : %08lx\n", buf_type, dev->fw_info.ofs);
 
 	/* 2. Initialize registers of channel I/F */
 	s5p_mfc_clear_cmds(dev);
-	s5p_mfc_clean_dev_int_flags(dev);
 
 	/* 3. Release reset signal to the RISC */
+#ifndef CONFIG_EXYNOS_MFC_HRVC
+	s5p_mfc_clean_dev_int_flags(dev);
 	if (IS_MFCV6(dev))
 		MFC_WRITEL(0x1, S5P_FIMV_RISC_ON);
 	else
@@ -198,6 +215,16 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 		ret = -EIO;
 		goto err_init_hw;
 	}
+#else
+	if (buf_type == MFCBUF_NORMAL) {
+		hrvc_libfw_on();
+	} else if (buf_type == MFCBUF_DRM) {
+		ret = hrvc_ldfw_on();
+		if (ret != 0) {
+			goto err_init_hw;
+		}
+	}
+#endif
 
 	s5p_mfc_clean_dev_int_flags(dev);
 	/* 4. Initialize firmware */
@@ -250,6 +277,7 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 #ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
 	/* Cache flush for base address change */
 	if (FW_HAS_BASE_CHANGE(dev)) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		s5p_mfc_clean_dev_int_flags(dev);
 		s5p_mfc_cmd_host2risc(dev, S5P_FIMV_CH_CACHE_FLUSH, NULL);
 		if (s5p_mfc_wait_for_done_dev(dev, S5P_FIMV_R2H_CMD_CACHE_FLUSH_RET)) {
@@ -257,6 +285,7 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 			ret = -EIO;
 			goto err_init_hw;
 		}
+#endif
 
 		if (buf_type == MFCBUF_DRM && !curr_ctx_backup) {
 			s5p_mfc_clock_off(dev);
@@ -264,6 +293,7 @@ static int _s5p_mfc_init_hw(struct s5p_mfc_dev *dev, enum mfc_buf_usage_type buf
 			s5p_mfc_clock_on_with_base(dev, MFCBUF_NORMAL);
 		} else if (buf_type == MFCBUF_NORMAL && curr_ctx_backup) {
 			s5p_mfc_init_memctrl(dev, MFCBUF_DRM);
+			mfc_info_dev("[%d] Base Address : %08lx\n", buf_type, dev->fw_info.ofs);
 		}
 	}
 #endif
@@ -281,6 +311,11 @@ int s5p_mfc_init_hw(struct s5p_mfc_dev *dev)
 {
 	int ret;
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	ret = hrvc_worker_initialize();
+	if (ret)
+		return ret;
+#endif
 	ret = _s5p_mfc_init_hw(dev, MFCBUF_NORMAL);
 	if (ret)
 		return ret;
@@ -311,13 +346,18 @@ void s5p_mfc_deinit_hw(struct s5p_mfc_dev *dev)
 		s5p_mfc_reset(dev);
 		s5p_mfc_clock_off(dev);
 	} else if (IS_MFCv10X(dev)) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		s5p_mfc_clock_on(dev);
 		mfc_info_dev("MFC h/w state: %d\n",
 				MFC_READL(S5P_FIMV_MFC_STATE));
 		MFC_WRITEL(0x1, S5P_FIMV_MFC_CLOCK_OFF);
 		s5p_mfc_clock_off(dev);
+#endif
 	}
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	hrvc_worker_finalize();
+#endif
 	mfc_debug(2, "mfc deinit completed\n");
 }
 
@@ -326,7 +366,6 @@ int s5p_mfc_sleep(struct s5p_mfc_dev *dev)
 	struct s5p_mfc_ctx *ctx;
 	int ret;
 	int old_state, i;
-	int need_cache_flush = 0;
 
 	mfc_debug_enter();
 
@@ -347,14 +386,8 @@ int s5p_mfc_sleep(struct s5p_mfc_dev *dev)
 			mfc_err("no mfc context to run\n");
 			return -EINVAL;
 		} else {
-			mfc_info_dev("ctx is changed %d -> %d\n",
-					dev->curr_ctx, ctx->num);
 			dev->curr_ctx = ctx->num;
-			if (dev->curr_ctx_drm != ctx->is_drm) {
-				need_cache_flush = 1;
-				mfc_info_dev("DRM attribute is changed %d->%d\n",
-						dev->curr_ctx_drm, ctx->is_drm);
-			}
+			dev->curr_ctx_drm = ctx->is_drm;
 		}
 	}
 	old_state = ctx->state;
@@ -366,32 +399,20 @@ int s5p_mfc_sleep(struct s5p_mfc_dev *dev)
 		mfc_err_dev("Waiting for hardware to finish timed out\n");
 		ret = -EIO;
 		return ret;
+	} else {
+		ret = 0;
 	}
 
+	s5p_mfc_change_state(ctx, old_state);
+
+#ifndef CONFIG_EXYNOS_MFC_HRVC
+	s5p_mfc_clean_dev_int_flags(dev);
 	spin_lock_irq(&dev->condlock);
 	mfc_info_dev("curr_ctx_drm:%d, hw_lock:%lu\n", dev->curr_ctx_drm, dev->hw_lock);
 	set_bit(ctx->num, &dev->hw_lock);
 	spin_unlock_irq(&dev->condlock);
 
-	s5p_mfc_change_state(ctx, old_state);
 	s5p_mfc_clock_on(dev);
-	s5p_mfc_clean_dev_int_flags(dev);
-
-	if (need_cache_flush) {
-		s5p_mfc_cmd_host2risc(dev, S5P_FIMV_CH_CACHE_FLUSH, NULL);
-		if (s5p_mfc_wait_for_done_dev(dev, S5P_FIMV_R2H_CMD_CACHE_FLUSH_RET)) {
-			mfc_err_ctx("Failed to flush cache\n");
-			ret = -EINVAL;
-			goto err_mfc_sleep;
-		}
-
-		s5p_mfc_init_memctrl(dev, (ctx->is_drm ? MFCBUF_DRM : MFCBUF_NORMAL));
-		s5p_mfc_clock_off(dev);
-
-		dev->curr_ctx_drm = ctx->is_drm;
-		s5p_mfc_clock_on(dev);
-	}
-
 	ret = s5p_mfc_sleep_cmd(dev);
 	if (ret) {
 		mfc_err_dev("Failed to send command to MFC - timeout.\n");
@@ -417,6 +438,7 @@ err_mfc_sleep:
 	if (IS_MFCv10X(dev))
 		MFC_WRITEL(0x1, S5P_FIMV_MFC_CLOCK_OFF);
 	s5p_mfc_clock_off(dev);
+#endif
 	mfc_debug_leave();
 
 	return ret;
@@ -456,10 +478,12 @@ int s5p_mfc_wakeup(struct s5p_mfc_dev *dev)
 
 	/* 1. Set DRAM base Addr */
 	s5p_mfc_init_memctrl(dev, buf_type);
+	mfc_info_dev("[%d] Base Address : %08lx\n", buf_type, dev->fw_info.ofs);
 
 	/* 2. Initialize registers of channel I/F */
 	s5p_mfc_clear_cmds(dev);
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	s5p_mfc_clean_dev_int_flags(dev);
 	/* 3. Initialize firmware */
 	if (!FW_WAKEUP_AFTER_RISC_ON(dev))
@@ -502,6 +526,9 @@ int s5p_mfc_wakeup(struct s5p_mfc_dev *dev)
 		ret = -EIO;
 		goto err_mfc_wakeup;
 	}
+#else
+	MFC_SFR_WRITEL(0x1, S5P_FIMV_RISC_ON);
+#endif
 
 err_mfc_wakeup:
 	s5p_mfc_clock_off(dev);

@@ -356,7 +356,16 @@ int s5p_mfc_alloc_codec_buffers(struct s5p_mfc_ctx *ctx)
 			mfc_err_ctx("Allocating codec buffer failed.\n");
 			return -ENOMEM;
 		}
+
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		ctx->codec_buf_phys = s5p_mfc_mem_daddr_priv(ctx->codec_buf);
+#else
+		if (ctx->is_drm)
+			ctx->codec_buf_phys = s5p_mfc_mem_phys_addr(ctx->codec_buf);
+		else
+			ctx->codec_buf_phys = s5p_mfc_mem_daddr_priv(ctx->codec_buf);
+#endif
+
 		ctx->codec_buf_virt = s5p_mfc_mem_vaddr_priv(ctx->codec_buf);
 		mfc_debug(2, "Codec buf alloc, ctx: %d, size: %ld, addr: 0x%lx\n",
 			ctx->num, ctx->codec_buf_size, ctx->codec_buf_phys);
@@ -370,6 +379,7 @@ int s5p_mfc_alloc_codec_buffers(struct s5p_mfc_ctx *ctx)
 		}
 	}
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	if (ctx->is_drm) {
 		int ret = 0;
 		phys_addr_t addr = s5p_mfc_mem_phys_addr(ctx->codec_buf);
@@ -380,6 +390,7 @@ int s5p_mfc_alloc_codec_buffers(struct s5p_mfc_ctx *ctx)
 			return ret;
 		}
 	}
+#endif
 
 	mfc_debug_leave();
 
@@ -398,11 +409,12 @@ void s5p_mfc_release_codec_buffers(struct s5p_mfc_ctx *ctx)
 
 	dev = ctx->dev;
 	if (!dev) {
-		mfc_err_ctx("no mfc device to run\n");
+		mfc_err("no mfc device to run\n");
 		return;
 	}
 
 	if (ctx->codec_buf) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (ctx->is_drm) {
 			int ret = 0;
 			phys_addr_t addr = s5p_mfc_mem_phys_addr(ctx->codec_buf);
@@ -411,6 +423,7 @@ void s5p_mfc_release_codec_buffers(struct s5p_mfc_ctx *ctx)
 			if (ret != DRMDRV_OK)
 				mfc_err_ctx("failed to CFW PROT (%#x)\n", ret);
 		}
+#endif
 
 		s5p_mfc_mem_free_priv(ctx->codec_buf);
 		ctx->codec_buf = 0;
@@ -476,8 +489,13 @@ int s5p_mfc_alloc_instance_buffer(struct s5p_mfc_ctx *ctx)
 		break;
 	}
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	if (ctx->is_drm)
 		alloc_ctx = dev->alloc_ctx_drm;
+#else
+	if (ctx->is_drm)
+		alloc_ctx = dev->alloc_ctx_hrvc;
+#endif
 
 	ctx->ctx.alloc = s5p_mfc_mem_alloc_priv(alloc_ctx, ctx->ctx_buf_size);
 	if (IS_ERR(ctx->ctx.alloc)) {
@@ -501,14 +519,18 @@ int s5p_mfc_alloc_instance_buffer(struct s5p_mfc_ctx *ctx)
 	}
 
 	if (ctx->is_drm) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		int ret = 0;
-		phys_addr_t addr = s5p_mfc_mem_phys_addr(ctx->ctx.alloc);
-		ret = exynos_smc(SMC_DRM_SECBUF_CFW_PROT, addr,
+		ctx->ctx.phys = s5p_mfc_mem_phys_addr(ctx->ctx.alloc);
+		ret = exynos_smc(SMC_DRM_SECBUF_CFW_PROT, ctx->ctx.phys,
 					ctx->ctx_buf_size, dev->id);
 		if (ret != DRMDRV_OK) {
 			mfc_err_ctx("failed to CFW PROT (%#x)\n", ret);
 			return ret;
 		}
+#else
+		ctx->ctx.phys = s5p_mfc_mem_phys_addr(ctx->ctx.alloc);
+#endif
 	}
 
 	mfc_debug_leave();
@@ -529,11 +551,12 @@ void s5p_mfc_release_instance_buffer(struct s5p_mfc_ctx *ctx)
 
 	dev = ctx->dev;
 	if (!dev) {
-		mfc_err_ctx("no mfc device to run\n");
+		mfc_err("no mfc device to run\n");
 		return;
 	}
 
 	if (ctx->ctx.virt) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 		if (ctx->is_drm) {
 			int ret = 0;
 			phys_addr_t addr = s5p_mfc_mem_phys_addr(ctx->ctx.alloc);
@@ -542,6 +565,7 @@ void s5p_mfc_release_instance_buffer(struct s5p_mfc_ctx *ctx)
 			if (ret != DRMDRV_OK)
 				mfc_err_ctx("failed to CFW PROT (%#x)\n", ret);
 		}
+#endif
 
 		s5p_mfc_mem_free_priv(ctx->ctx.alloc);
 		ctx->ctx.alloc = NULL;
@@ -552,6 +576,9 @@ void s5p_mfc_release_instance_buffer(struct s5p_mfc_ctx *ctx)
 	mfc_debug_leave();
 }
 
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+extern struct vm_struct vm_mfc_fw;
+#endif
 /* Allocation for internal usage */
 static int mfc_alloc_dev_context_buffer(struct s5p_mfc_dev *dev,
 					enum mfc_buf_usage_type buf_type)
@@ -561,6 +588,9 @@ static int mfc_alloc_dev_context_buffer(struct s5p_mfc_dev *dev,
 	struct s5p_mfc_extra_buf *ctx_buf;
 	int firmware_size;
 	unsigned long fw_ofs;
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	dma_addr_t addr = 0;
+#endif
 
 	mfc_debug_enter();
 	if (!dev) {
@@ -585,6 +615,26 @@ static int mfc_alloc_dev_context_buffer(struct s5p_mfc_dev *dev,
 	ctx_buf->alloc = NULL;
 	ctx_buf->virt = 0;
 	ctx_buf->ofs = fw_ofs + firmware_size;
+
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+	if (buf_type == MFCBUF_DRM) {
+		ctx_buf->alloc = s5p_mfc_mem_alloc_priv(dev->alloc_ctx_hrvc, SZ_32K);
+		if (IS_ERR(ctx_buf->alloc)) {
+			ctx_buf->alloc = NULL;
+			mfc_err_dev("Allocating context buffer failed\n");
+			return -ENOMEM;
+		}
+		ctx_buf->phys = s5p_mfc_mem_phys_addr(ctx_buf->alloc);
+	} else {
+		addr = (dma_addr_t)vm_mfc_fw.addr;
+		ctx_buf->virt = (void *)addr + firmware_size;
+	}
+#else
+	addr = (dma_addr_t)vm_mfc_fw.addr;
+	ctx_buf->virt = (void *)addr + firmware_size;
+#endif
+#endif
 
 	mfc_debug_leave();
 
@@ -629,7 +679,7 @@ static void mfc_release_dev_context_buffer(struct s5p_mfc_dev *dev,
 		ctx_buf = &dev->ctx_buf_drm;
 #endif
 
-	if (ctx_buf->virt) {
+	if (ctx_buf->alloc) {
 		s5p_mfc_mem_free_priv(ctx_buf->alloc);
 		ctx_buf->alloc = NULL;
 		ctx_buf->ofs = 0;
@@ -639,6 +689,7 @@ static void mfc_release_dev_context_buffer(struct s5p_mfc_dev *dev,
 		if (ctx_buf->ofs)
 			ctx_buf->ofs = 0;
 	}
+
 }
 
 /* Release context buffers for SYS_INIT */
@@ -1050,6 +1101,19 @@ int s5p_mfc_set_dec_stream_buffer(struct s5p_mfc_ctx *ctx, struct s5p_mfc_buf *m
 
 	MFC_WRITEL(strm_size, S5P_FIMV_D_STREAM_DATA_SIZE);
 	MFC_WRITEL(addr, S5P_FIMV_D_CPB_BUFFER_ADDR);
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	if (ctx->is_drm) {
+		if (mfc_buf)
+			addr = (unsigned long)mfc_buf->phy_addr;
+		MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_D_CPB_BUFFER_ADDR_UPPER);
+		MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_D_CPB_BUFFER_ADDR_LOWER);
+	} else {
+		if (mfc_buf)
+			addr = (unsigned long)mfc_buf->vir_addr;
+		MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_D_CPB_BUFFER_ADDR_UPPER);
+		MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_D_CPB_BUFFER_ADDR_LOWER);
+	}
+#endif
 	MFC_WRITEL(cpb_buf_size, S5P_FIMV_D_CPB_BUFFER_SIZE);
 	MFC_WRITEL(start_num_byte, S5P_FIMV_D_CPB_BUFFER_OFFSET);
 
@@ -1086,6 +1150,17 @@ int s5p_mfc_set_enc_stream_buffer(struct s5p_mfc_ctx *ctx,
 
 	MFC_WRITEL(addr, S5P_FIMV_E_STREAM_BUFFER_ADDR); /* 16B align */
 	MFC_WRITEL(size, S5P_FIMV_E_STREAM_BUFFER_SIZE);
+#ifdef CONFIG_EXYNOS_MFC_HRVC
+	if (ctx->is_drm) {
+		addr = (unsigned long)mfc_buf->phy_addr;
+		MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_E_STREAM_BUFFER_ADDR_UPPER);
+		MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_E_STREAM_BUFFER_ADDR_LOWER);
+	} else {
+		addr = (unsigned long)mfc_buf->vir_addr;
+		MFC_WRITEL((unsigned int)(addr >> 32), S5P_FIMV_E_STREAM_BUFFER_ADDR_UPPER);
+		MFC_WRITEL((unsigned int)(addr & 0xFFFFFFFF), S5P_FIMV_E_STREAM_BUFFER_ADDR_LOWER);
+	}
+#endif
 
 	mfc_debug(2, "stream buf addr: 0x%08lx, size: 0x%08x(%d)",
 		(unsigned long)addr, size, size);

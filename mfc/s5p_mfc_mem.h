@@ -29,7 +29,19 @@ static inline dma_addr_t s5p_mfc_mem_plane_addr(
 	void *cookie = vb2_plane_cookie(v, n);
 	dma_addr_t addr = 0;
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	WARN_ON(vb2_ion_dma_address(cookie, &addr) != 0);
+#else
+#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
+	if (c->is_drm)
+		WARN_ON(vb2_ion_phys_address(cookie,
+				(phys_addr_t *)&addr) != 0);
+	else
+		WARN_ON(vb2_ion_dma_address(cookie, &addr) != 0);
+#else
+	WARN_ON(vb2_ion_dma_address(cookie, &addr) != 0);
+#endif
+#endif
 
 	return (unsigned long)addr;
 }
@@ -88,8 +100,10 @@ int s5p_mfc_mem_clean_vb(struct vb2_buffer *vb, u32 num_planes);
 int s5p_mfc_mem_inv_vb(struct vb2_buffer *vb, u32 num_planes);
 int s5p_mfc_mem_flush_vb(struct vb2_buffer *vb, u32 num_planes);
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 int s5p_mfc_alloc_firmware(struct s5p_mfc_dev *dev);
 int s5p_mfc_load_firmware(struct s5p_mfc_dev *dev);
 int s5p_mfc_release_firmware(struct s5p_mfc_dev *dev);
+#endif
 
 #endif /* __S5P_MFC_MEM_H */

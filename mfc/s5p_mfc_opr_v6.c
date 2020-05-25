@@ -41,7 +41,7 @@
 #include "s5p_mfc_utils.h"
 #include "s5p_mfc_nal_q.h"
 
-/* This value guarantees 375msec ~ 2sec according to MFC clock (533MHz ~ 100MHz)
+/* This value guarantees 482msec ~ 2sec according to MFC clock (415MHz ~ 100MHz)
  * releated with S5P_FIMV_DEC_TIMEOUT_VALUE */
 #define MFC_TIMEOUT_VALUE	200000000
 
@@ -153,6 +153,7 @@ static int s5p_mfc_init_decode(struct s5p_mfc_ctx *ctx)
 	/* Enable realloc interface if SEI is enabled */
 	if (dec->sei_parse && FW_HAS_SEI_S3D_REALLOC(dev))
 		reg |= (0x1 << S5P_FIMV_D_SEI_NEED_INIT_BUFFER_SHIFT);
+  reg |= (0x1 << S5P_FIMV_D_SEI_RECOVERY_PARSING_ENABLE);		
 	MFC_WRITEL(reg, S5P_FIMV_D_SEI_ENABLE);
 
 	MFC_WRITEL(ctx->inst_no, S5P_FIMV_INSTANCE_ID);
@@ -167,7 +168,6 @@ static int s5p_mfc_decode_one_frame(struct s5p_mfc_ctx *ctx, int last_frame)
 {
 	struct s5p_mfc_dev *dev;
 	struct s5p_mfc_dec *dec;
-	u32 reg = 0;
 
 	if (!ctx) {
 		mfc_err("no mfc context to run\n");
@@ -186,13 +186,6 @@ static int s5p_mfc_decode_one_frame(struct s5p_mfc_ctx *ctx, int last_frame)
 	mfc_debug(2, "Setting flags to %08lx (free:%d WTF:%d)\n",
 				dec->dpb_status, ctx->dst_queue_cnt,
 						dec->dpb_queue_cnt);
-
-	reg = MFC_READL(S5P_FIMV_D_NAL_START_OPTIONS);
-	reg &= ~(0x1 << S5P_FIMV_D_NAL_START_OPT_BLACK_BAR_SHIFT);
-	reg |= ((dec->detect_black_bar & 0x1) << S5P_FIMV_D_NAL_START_OPT_BLACK_BAR_SHIFT);
-	MFC_WRITEL(reg, S5P_FIMV_D_NAL_START_OPTIONS);
-	mfc_debug(3, "black bar detect set: %#x\n", reg);
-
 	if (dec->is_dynamic_dpb) {
 		mfc_debug(2, "Dynamic:0x%08x, Available:0x%08lx\n",
 					dec->dynamic_set, dec->dpb_status);
@@ -421,17 +414,6 @@ static int mfc_set_dynamic_dpb(struct s5p_mfc_ctx *ctx, struct s5p_mfc_buf *dst_
 	mfc_debug(2, "ADDING Flag after: %lx\n", dec->dpb_status);
 	mfc_debug(2, "Dst addr [%d] = 0x%llx\n", dst_index,
 			(unsigned long long)dst_vb->planes.raw[0]);
-
-	/* for debugging about black bar detection */
-	if (FW_HAS_BLACK_BAR_DETECT(dev) && dec->detect_black_bar) {
-		for (i = 0; i < raw->num_planes; i++) {
-			dec->frame_vaddr[i][dec->frame_cnt] = vb2_plane_vaddr(&dst_vb->vb, i);
-			dec->frame_size[i][dec->frame_cnt] = raw->plane_size[i];
-		}
-		dec->frame_cnt++;
-		if (dec->frame_cnt >= 30)
-			dec->frame_cnt = 0;
-	}
 
 	/* decoder dst buffer CFW PROT */
 	if (ctx->is_drm) {
@@ -1155,6 +1137,7 @@ void s5p_mfc_try_run(struct s5p_mfc_dev *dev)
 		if (FW_HAS_BASE_CHANGE(dev)) {
 			s5p_mfc_clean_dev_int_flags(dev);
 
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 			s5p_mfc_cmd_host2risc(dev, S5P_FIMV_CH_CACHE_FLUSH, NULL);
 			if (s5p_mfc_wait_for_done_dev(dev, S5P_FIMV_R2H_CMD_CACHE_FLUSH_RET)) {
 				mfc_err_ctx("Failed to flush cache\n");
@@ -1165,6 +1148,12 @@ void s5p_mfc_try_run(struct s5p_mfc_dev *dev)
 
 			dev->curr_ctx_drm = ctx->is_drm;
 			s5p_mfc_clock_on(dev);
+#else
+			s5p_mfc_clock_off(dev);
+
+			dev->curr_ctx_drm = ctx->is_drm;
+			s5p_mfc_clock_on(dev);
+#endif
 		} else {
 			dev->curr_ctx_drm = ctx->is_drm;
 		}

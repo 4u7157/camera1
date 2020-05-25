@@ -105,9 +105,15 @@ int s5p_mfc_clock_on(struct s5p_mfc_dev *dev)
 			spin_lock_irqsave(&dev->pm.clklock, flags);
 			if ((atomic_inc_return(&dev->clk_ref) == 1) &&
 					FW_HAS_BUS_RESET(dev)) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 				val = MFC_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
 				val &= ~(0x1);
 				MFC_WRITEL(val, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#else
+				val = MFC_SFR_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
+				val &= ~(0x1);
+				MFC_SFR_WRITEL(val, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#endif
 				dev->pm.clock_on_steps |= 0x1 << 5;
 			}
 			spin_unlock_irqrestore(&dev->pm.clklock, flags);
@@ -154,7 +160,11 @@ void s5p_mfc_clock_off(struct s5p_mfc_dev *dev)
 		dev->pm.clock_off_steps |= 0x1 << 1;
 		if ((atomic_dec_return(&dev->clk_ref) == 0) &&
 				FW_HAS_BUS_RESET(dev)) {
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 			MFC_WRITEL(0x1, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#else
+			MFC_SFR_WRITEL(0x1, S5P_FIMV_MFC_BUS_RESET_CTRL);
+#endif
 
 			timeout = jiffies + msecs_to_jiffies(MFC_BW_TIMEOUT);
 			/* Check bus status */
@@ -163,7 +173,11 @@ void s5p_mfc_clock_off(struct s5p_mfc_dev *dev)
 					mfc_err_dev("Timeout while resetting MFC.\n");
 					break;
 				}
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 				val = MFC_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
+#else
+				val = MFC_SFR_READL(S5P_FIMV_MFC_BUS_RESET_CTRL);
+#endif
 			} while ((val & 0x2) == 0);
 			dev->pm.clock_off_steps |= 0x1 << 2;
 		}

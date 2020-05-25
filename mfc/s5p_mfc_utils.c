@@ -107,10 +107,11 @@ int check_vb_with_fmt(struct s5p_mfc_fmt *fmt, struct vb2_buffer *vb)
 int s5p_mfc_stream_buf_prot(struct s5p_mfc_ctx *ctx,
 				struct s5p_mfc_buf *buf, bool en)
 {
+	int ret = 0;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	struct s5p_mfc_dev *dev;
 	struct s5p_mfc_dec *dec = NULL;
 	struct s5p_mfc_enc *enc = NULL;
-	int ret = 0;
 	void *cookie = NULL;
 	phys_addr_t addr = 0;
 	u32 cmd_id;
@@ -159,15 +160,18 @@ int s5p_mfc_stream_buf_prot(struct s5p_mfc_ctx *ctx,
 		}
 	}
 
+#endif
 	return ret;
 }
 
 int s5p_mfc_raw_buf_prot(struct s5p_mfc_ctx *ctx,
 				struct s5p_mfc_buf *buf, bool en)
 {
+	int ret = 0;
+#ifndef CONFIG_EXYNOS_MFC_HRVC
 	struct s5p_mfc_dev *dev;
+	int num_planes = 0, i;
 	struct s5p_mfc_raw_info *raw = &ctx->raw_buf;
-	int num_planes = 0, i, ret = 0;
 	void *cookie = NULL;
 	phys_addr_t addr = 0;
 	u32 cmd_id;
@@ -228,6 +232,7 @@ int s5p_mfc_raw_buf_prot(struct s5p_mfc_ctx *ctx,
 			}
 		}
 	}
+#endif
 
 	return ret;
 }
