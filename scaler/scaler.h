@@ -20,7 +20,6 @@
 #include <linux/videodev2_exynos_media.h>
 #include <linux/io.h>
 #include <linux/pm_qos.h>
-#include <linux/exynos-busmon.h>
 #include <media/videobuf2-core.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-mem2mem.h>
@@ -93,10 +92,8 @@ extern int sc_log_level;
 		(x == V4L2_PIX_FMT_YVU420) || (x == V4L2_PIX_FMT_NV12) || \
 		(x == V4L2_PIX_FMT_NV21) || (x == V4L2_PIX_FMT_NV12M) || \
 		(x == V4L2_PIX_FMT_NV21M) || (x == V4L2_PIX_FMT_YUV420M) || \
-		(x == V4L2_PIX_FMT_YVU420M) || (x == V4L2_PIX_FMT_NV12MT_16X16) || \
-		(x == V4L2_PIX_FMT_NV12N) || (x == V4L2_PIX_FMT_NV12N_RGB32))
-#define sc_fmt_is_ayv12(x)	((x == V4L2_PIX_FMT_YVU420) || \
-		(x == V4L2_PIX_FMT_YVU420_RGB32))
+		(x == V4L2_PIX_FMT_YVU420M) || (x == V4L2_PIX_FMT_NV12MT_16X16))
+#define sc_fmt_is_ayv12(x)	((x) == V4L2_PIX_FMT_YVU420)
 #define sc_dith_val(a, b, c)	((a << SCALER_DITH_R_SHIFT) |	\
 		(b << SCALER_DITH_G_SHIFT) | (c << SCALER_DITH_B_SHIFT))
 
@@ -128,11 +125,6 @@ extern int sc_log_level;
 #define V4L2_PIX_FMT_NV12M_RGB555X   v4l2_fourcc('N', 'V', 'R', '5') /* 12  Y/CbCr 4:2:0 RGB555X  */
 #define V4L2_PIX_FMT_NV12MT_16X16_RGB32 v4l2_fourcc('V', 'M', 'R', 'G') /* 12  Y/CbCr 4:2:0 16x16 macroblocks */
 #define V4L2_PIX_FMT_NV12_RGB32 v4l2_fourcc('N', 'V', '1', 'R') /* 12  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_NV12N_RGB32   v4l2_fourcc('N', 'N', '1', 'R') /* 12  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_NV21M_RGB32   v4l2_fourcc('V', 'N', 'R', 'G') /* 21  Y/CbCr 4:2:0 RGBA  */
-#define V4L2_PIX_FMT_NV21M_BGR32   v4l2_fourcc('V', 'N', 'B', 'G') /* 21  Y/CbCr 4:2:0 ARGB  */
-#define V4L2_PIX_FMT_NV21_RGB32    v4l2_fourcc('V', 'N', '1', 'R') /* 21  Y/CbCr 4:2:0 RGBA */
-#define V4L2_PIX_FMT_YVU420_RGB32  v4l2_fourcc('Y', 'V', 'R', 'G') /* 12  YVU 4:2:0 RGBA  */
 
 /* for denoising filter */
 #define SC_CID_DNOISE_FT		(V4L2_CID_EXYNOS_BASE + 150)
@@ -290,8 +282,8 @@ struct sc_fmt {
 	u32	pixelformat;
 	u32	cfg_val;
 	u8	bitperpixel[SC_MAX_PLANES];
-	u8	num_planes:3;
-	u8	num_comp:3;
+	u8	num_planes:2;
+	u8	num_comp:2;
 	u8	h_shift:1;
 	u8	v_shift:1;
 	u8	is_rgb:1;
@@ -375,7 +367,6 @@ enum sc_ft {
 	SC_FT_240,
 	SC_FT_480,
 	SC_FT_720,
-	SC_FT_960,
 	SC_FT_1080,
 	SC_FT_MAX,
 };
@@ -420,9 +411,8 @@ struct sc_ctx;
  * @lock:	the mutex pscecting this data structure
  * @wdt:	watchdog timer information
  * @version:	IP version number
- * @busmon_nb:	busmon notifier block
- * @busmon_m:	busmon master name
  * @cfw:	cfw flag
+ * @pb_disable:	prefetch-buffer disable flag
  */
 struct sc_dev {
 	struct device			*dev;
@@ -450,8 +440,7 @@ struct sc_dev {
 	s32				qosreq_int_level;
 	int				dev_id;
 	u32				version;
-	struct notifier_block		busmon_nb;
-	char				*busmon_m;
+	bool				pb_disable;
 	u32				cfw;
 };
 
@@ -559,9 +548,13 @@ bool sc_is_format_for_alphablend(u32 pixelformat);
 void sc_hwregs_dump(struct sc_dev *sc);
 
 #ifdef CONFIG_VIDEOBUF2_ION
-static inline int sc_get_dma_address(void *cookie, dma_addr_t *addr)
+/* for Java */
+static inline int sc_get_dma_address(void *cookie, dma_addr_t *addr, struct sc_ctx *ctx)
 {
-	return vb2_ion_dma_address(cookie, addr);
+	if (ctx->cp_enabled)
+		return vb2_ion_phys_address(cookie, addr);
+	else
+		return vb2_ion_dma_address(cookie, addr);
 }
 
 #define sc_get_kernel_address vb2_ion_private_vaddr

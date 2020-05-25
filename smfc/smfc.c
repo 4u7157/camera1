@@ -19,7 +19,6 @@
 #include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/exynos_iovmm.h>
-#include <linux/smc.h>
 
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-ion.h>
@@ -749,28 +748,6 @@ static int __attribute__((unused)) smfc_iommu_fault_handler(
 	return 0;
 }
 
-#ifdef CONFIG_EXYNOS_CONTENT_PATH_PROTECTION
-static bool smfc_excuse_cfw(struct device *dev)
-{
-	struct smfc_dev *smfc = dev_get_drvdata(dev);
-
-	if (!!(smfc->attr & SMFC_ATTR_NEED_CFW_PERMISSION)) {
-		int ret = exynos_smc(MC_FC_SET_CFW_PROT, 0, PROT_JPEG, 0);
-		if (ret != SMC_TZPC_OK) {
-			dev_err(dev, "Failed to get CFW permission(%d)\n", ret);
-			return false;
-		}
-	}
-
-	return true;
-}
-#else /* CONFIG_EXYNOS_CONTENT_PATH_PROTECTION */
-static inline bool smfc_excuse_cfw(struct device *dev)
-{
-	return true;
-}
-#endif
-
 static const struct smfc_device_data smfc_8890_data = {
 	.device_caps = V4L2_CAP_EXYNOS_JPEG_B2B_COMPRESSION
 			| V4L2_CAP_EXYNOS_JPEG_HWFC
@@ -839,8 +816,6 @@ static int exynos_smfc_probe(struct platform_device *pdev)
 
 	smfc->dev = &pdev->dev;
 
-	platform_set_drvdata(pdev, smfc);
-
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	smfc->reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(smfc->reg))
@@ -862,11 +837,6 @@ static int exynos_smfc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	if (of_property_read_bool(pdev->dev.of_node, "exynos-jpeg,cfw")) {
-		dev_info(&pdev->dev, "Include acquisition of CFW permission\n");
-		smfc->attr |= SMFC_ATTR_NEED_CFW_PERMISSION;
-	}
-
 	ret = smfc_init_clock(&pdev->dev, smfc);
 	if (ret)
 		return ret;
@@ -879,22 +849,6 @@ static int exynos_smfc_probe(struct platform_device *pdev)
 	}
 
 	pm_runtime_enable(&pdev->dev);
-
-	/* If CONFIG_PM_RUNTIME is not enabled, get some permission from CFW */
-	if (!pm_runtime_enabled(&pdev->dev) && !smfc_excuse_cfw(&pdev->dev))
-		return -EACCES;
-
-	if (!of_property_read_u32(pdev->dev.of_node, "smfc,int_qos_minlock",
-				(u32 *)&smfc->qosreq_int_level)) {
-		if (smfc->qosreq_int_level > 0) {
-			pm_qos_add_request(&smfc->qosreq_int,
-					PM_QOS_DEVICE_THROUGHPUT, 0);
-			dev_info(&pdev->dev, "INT Min.Lock Freq. = %d\n",
-					smfc->qosreq_int_level);
-		} else {
-			smfc->qosreq_int_level = 0;
-		}
-	}
 
 	ret = smfc_find_hw_version(&pdev->dev, smfc);
 	if (ret < 0)
@@ -919,6 +873,8 @@ static int exynos_smfc_probe(struct platform_device *pdev)
 
 	setup_timer(&smfc->timer, smfc_timedout_handler, (unsigned long)smfc);
 
+	platform_set_drvdata(pdev, smfc);
+
 	spin_lock_init(&smfc->flag_lock);
 
 	dev_info(&pdev->dev, "Probed H/W Version: %02x.%02x.%04x\n",
@@ -939,7 +895,6 @@ static int exynos_smfc_remove(struct platform_device *pdev)
 {
 	struct smfc_dev *smfc = platform_get_drvdata(pdev);
 
-	pm_qos_remove_request(&smfc->qosreq_int);
 	vb2_ion_destroy_context(smfc->vb2_alloc_ctx);
 	smfc_deinit_clock(smfc);
 
@@ -981,10 +936,6 @@ static int smfc_resume(struct device *dev)
 	/* completing the unfinished job and resuming the next pending jobs */
 	if (ctx)
 		v4l2_m2m_job_finish(smfc->m2mdev, ctx->fh.m2m_ctx);
-
-	if (!IS_ENABLED(CONFIG_PM_RUNTIME) && !smfc_excuse_cfw(dev))
-		return -EACCES;
-
 	return 0;
 }
 #endif
@@ -992,7 +943,7 @@ static int smfc_resume(struct device *dev)
 #ifdef CONFIG_PM_RUNTIME
 static int smfc_runtime_resume(struct device *dev)
 {
-	return smfc_excuse_cfw(dev) ? 0 : -EACCES;
+	return 0;
 }
 
 static int smfc_runtime_suspend(struct device *dev)

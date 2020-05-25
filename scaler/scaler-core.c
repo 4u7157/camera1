@@ -238,15 +238,6 @@ static const struct sc_fmt sc_formats[] = {
 		.h_shift	= 1,
 		.v_shift	= 1,
 	}, {
-		.name		= "YUV 4:2:0 contiguous Y/CbCr 10-bit",
-		.pixelformat	= V4L2_PIX_FMT_NV12N_10B,
-		.cfg_val	= SCALER_CFG_FMT_YCBCR420_2P,
-		.bitperpixel	= { 15 },
-		.num_planes	= 1,
-		.num_comp	= 2,
-		.h_shift	= 1,
-		.v_shift	= 1,
-	}, {
 		.name		= "YUV 4:2:0 contiguous 3-planar Y/Cb/Cr",
 		.pixelformat	= V4L2_PIX_FMT_YUV420N,
 		.cfg_val	= SCALER_CFG_FMT_YCBCR420_3P,
@@ -340,66 +331,6 @@ static const struct sc_fmt sc_formats[] = {
 		.v_shift	= 1,
 		.is_alphablend_fmt = 1,
 		.alphablend_plane_num = 1,
-	}, {
-		/* Src Blending : NV12N + RGB32 */
-		.name		= "NV12N-RGB32",
-		.pixelformat	= V4L2_PIX_FMT_NV12N_RGB32,
-		.cfg_val	= SCALER_CFG_FMT_YCBCR420_2P,
-		.bitperpixel	= { 12, 32 },
-		.num_planes	= 2,
-		.num_comp	= 3,
-		.h_shift	= 1,
-		.v_shift	= 1,
-		.is_alphablend_fmt = 1,
-		.alphablend_plane_num = 1,
-	}, {
-		/* Src Blending : NV21M + RGB32 */
-		.name		= "NV21M-RGB32",
-		.pixelformat	= V4L2_PIX_FMT_NV21M_RGB32,
-		.cfg_val	= SCALER_CFG_FMT_YCRCB420_2P,
-		.bitperpixel	= { 8, 4, 32 },
-		.num_planes	= 3,
-		.num_comp	= 3,
-		.h_shift	= 1,
-		.v_shift	= 1,
-		.is_alphablend_fmt = 1,
-		.alphablend_plane_num = 2,
-	}, {
-		/* Src Blending : NV21M + BGR32 */
-		.name		= "NV21M-BGR32",
-		.pixelformat	= V4L2_PIX_FMT_NV21M_BGR32,
-		.cfg_val	= SCALER_CFG_FMT_YCRCB420_2P,
-		.bitperpixel	= { 8, 4, 32 },
-		.num_planes	= 3,
-		.num_comp	= 3,
-		.h_shift	= 1,
-		.v_shift	= 1,
-		.is_alphablend_fmt = 1,
-		.alphablend_plane_num = 2,
-	}, {
-		/* Src Blending : NV21 + RGB32 */
-		.name		= "NV21-RGB32",
-		.pixelformat	= V4L2_PIX_FMT_NV21_RGB32,
-		.cfg_val	= SCALER_CFG_FMT_YCRCB420_2P,
-		.bitperpixel	= { 12, 32 },
-		.num_planes	= 2,
-		.num_comp	= 3,
-		.h_shift	= 1,
-		.v_shift	= 1,
-		.is_alphablend_fmt = 1,
-		.alphablend_plane_num = 1,
-        }, {
-                /* Src Blending : YV12 + RGB32 */
-                .name           = "YV12-RGB32",
-                .pixelformat    = V4L2_PIX_FMT_YVU420_RGB32,    /* YV12-RGB32 */
-                .cfg_val        = SCALER_CFG_FMT_YCBCR420_3P,
-                .bitperpixel    = { 12, 32},
-                .num_planes     = 2,
-                .num_comp       = 4,
-                .h_shift        = 1,
-                .v_shift        = 1,
-                .is_alphablend_fmt = 1,
-                .alphablend_plane_num = 1,
 	},
 };
 
@@ -425,6 +356,7 @@ static const struct sc_fmt sc_formats[] = {
 
 /* must specify in revers order of SCALER_VERSION(xyz) */
 static const u32 sc_version_table[][2] = {
+	{ 0x01200009, SCALER_VERSION(4, 2, 0) }, /* SC_BI */
 	{ 0x80062004, SCALER_VERSION(4, 2, 0) }, /* SC_BI */
 	{ 0x80060007, SCALER_VERSION(4, 2, 0) }, /* SC_BI */
 	{ 0x80052004, SCALER_VERSION(4, 0, 0) }, /* SC_POLY */
@@ -793,22 +725,6 @@ static int sc_v4l2_s_fmt_mplane(struct file *file, void *fh,
 	for (i = 0; i < frame->sc_fmt->num_planes; i++)
 		frame->bytesused[i] = pixm->plane_fmt[i].sizeimage;
 
-	if (V4L2_TYPE_IS_OUTPUT(f->type) && ctx->bl_op &&
-		ctx->sc_dev->variant->blending) {
-		struct sc_src_blend_cfg *cfg = &ctx->src_blend_cfg;
-
-		if (cfg->blend_src_h_pos + cfg->blend_src_width >
-				cfg->blend_src_stride) {
-			v4l2_err(&ctx->sc_dev->m2m.v4l2_dev,
-				"Invalid stride of blending image: %d\n",
-				cfg->blend_src_stride);
-			v4l2_err(&ctx->sc_dev->m2m.v4l2_dev,
-				"which is smaller than X-pos(%d) + width(%d)\n",
-				cfg->blend_src_h_pos, cfg->blend_src_width);
-			return -EINVAL;
-		}
-	}
-
 	if (V4L2_TYPE_IS_OUTPUT(f->type) &&
 		((pixm->width > limitout->max_w) ||
 			 (pixm->height > limitout->max_h))) {
@@ -869,11 +785,21 @@ static void sc_fence_work(struct work_struct *work)
 	struct sync_fence *fence;
 	int ret;
 
-	/* Buffers do not have acquire_fence are never pushed to workqueue */
-	BUG_ON(svb->mb.vb.acquire_fence == NULL);
 	BUG_ON(!ctx->m2m_ctx);
 
 	fence = svb->mb.vb.acquire_fence;
+	/*
+	 * Acquire fence might be cleared as NULL in __vb2_queue_cancel().
+	 * __vb2_queue_cancel() can be called by explicit stop request,
+	 * or unexpected situation like closing driver forcefully.
+	 * Then no operation is enough, so just ignore it.
+	 */
+	if (!fence) {
+		dev_warn(ctx->sc_dev->dev,
+				"acquire fence is NULL, ignore it\n");
+		return;
+	}
+
 	svb->mb.vb.acquire_fence = NULL;
 
 	ret = sync_fence_wait(fence, 1000);
@@ -1529,11 +1455,10 @@ static int sc_prepare_2nd_scaling(struct sc_ctx *ctx,
 	return 0;
 }
 
-static struct sc_dnoise_filter sc_filter_tab[5] = {
+static struct sc_dnoise_filter sc_filter_tab[4] = {
 	{SC_FT_240,   426,  240},
 	{SC_FT_480,   854,  480},
 	{SC_FT_720,  1280,  720},
-	{SC_FT_960,  1920,  960},
 	{SC_FT_1080, 1920, 1080},
 };
 
@@ -1616,7 +1541,7 @@ static int sc_prepare_denoise_filter(struct sc_ctx *ctx)
 		goto err_ft;
 	}
 
-	if (ctx->sc_dev->variant->prescale) {
+	if (ctx->sc_dev->version >= SCALER_VERSION(3, 0, 0)) {
 		BUG_ON(sc_down_min != SCALE_RATIO_CONST(16, 1));
 
 		if (ctx->h_ratio > SCALE_RATIO_CONST(8, 1))
@@ -1882,12 +1807,23 @@ static int sc_vb2_start_streaming(struct vb2_queue *vq, unsigned int count)
 static void sc_vb2_stop_streaming(struct vb2_queue *vq)
 {
 	struct sc_ctx *ctx = vb2_get_drv_priv(vq);
+	struct v4l2_m2m_buffer *mb;
+	struct vb2_sc_buffer *svb;
+	struct vb2_buffer *vb;
 	int ret;
 
 	ret = sc_ctx_stop_req(ctx);
 	if (ret < 0)
 		dev_err(ctx->sc_dev->dev, "wait timeout\n");
 
+	list_for_each_entry(vb, &vq->queued_list, queued_entry) {
+		if (vb->acquire_fence) {
+			mb = container_of(vb, typeof(*mb), vb);
+			svb = container_of(mb, typeof(*svb), mb);
+
+			flush_work(&svb->work);
+		}
+	}
 	clear_bit(CTX_STREAMING, &ctx->flags);
 }
 
@@ -2334,7 +2270,7 @@ static int sc_ctrl_protection(struct sc_dev *sc, struct sc_ctx *ctx, bool en)
 	struct vb2_buffer *vb;
 	phys_addr_t addr;
 	int ret;
-	int i, nents;
+	int i;
 
 	vb = v4l2_m2m_next_src_buf(ctx->m2m_ctx);
 	for (i = 0; i < ctx->s_frame.sc_fmt->num_planes; i++) {
@@ -2343,13 +2279,9 @@ static int sc_ctrl_protection(struct sc_dev *sc, struct sc_ctx *ctx, bool en)
 			ret = -EINVAL;
 			goto err_addr;
 		}
-		vb2_ion_get_sg(cookie, &nents);
-		if (nents != 1)
-			break;
 		ret = vb2_ion_phys_address(cookie, &addr);
 		if (ret != 0)
 			goto err_addr;
-
 		ret = exynos_smc((en ? SMC_DRM_SECBUF_CFW_PROT :
 				SMC_DRM_SECBUF_CFW_UNPROT),
 				(unsigned long)addr,
@@ -2935,9 +2867,8 @@ static int sc_run_next_job(struct sc_dev *sc)
 	set_bit(DEV_RUN, &sc->state);
 	set_bit(CTX_RUN, &ctx->flags);
 
-	sc_set_prefetch_buffers(sc, ctx);
-
-	mod_timer(&sc->wdt.timer, jiffies + SC_TIMEOUT);
+	if (sc->pb_disable == false)
+		sc_set_prefetch_buffers(sc, ctx);
 
 	if (__measure_hw_latency) {
 		if (ctx->context_type == SC_CTX_V4L2_TYPE) {
@@ -2969,6 +2900,7 @@ static int sc_run_next_job(struct sc_dev *sc)
 	}
 #endif
 	sc_hwset_start(sc);
+	mod_timer(&sc->wdt.timer, jiffies + SC_TIMEOUT);
 
 	return 0;
 }
@@ -3082,8 +3014,9 @@ isr_unlock:
 	return IRQ_HANDLED;
 }
 
-static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
-		struct sc_frame *frame, struct sc_frame *src_blend_frame)
+static int sc_get_bufaddr(struct sc_dev *sc, struct sc_ctx *ctx,
+		struct vb2_buffer *vb2buf, struct sc_frame *frame,
+		struct sc_frame *src_blend_frame)
 {
 	int ret;
 	unsigned int pixsize, bytesize, src_blend_pixsize;
@@ -3096,7 +3029,7 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 	if (!cookie)
 		return -EINVAL;
 
-	ret = sc_get_dma_address(cookie, &frame->addr.y);
+	ret = sc_get_dma_address(cookie, &frame->addr.y, ctx);
 	if (ret != 0)
 		return ret;
 
@@ -3118,13 +3051,6 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 					NV12N_CBCR_BASE(frame->addr.y, w, h);
 				frame->addr.ysize = NV12N_Y_SIZE(w, h);
 				frame->addr.cbsize = NV12N_CBCR_SIZE(w, h);
-			} else if (frame->sc_fmt->pixelformat == V4L2_PIX_FMT_NV12N_10B) {
-				unsigned int w = frame->width;
-				unsigned int h = frame->height;
-				frame->addr.cb =
-					NV12N_10B_CBCR_BASE(frame->addr.y, w, h);
-				frame->addr.ysize = NV12N_Y_SIZE(w, h);
-				frame->addr.cbsize = NV12N_CBCR_SIZE(w, h);
 			} else {
 				frame->addr.cb = frame->addr.y + pixsize;
 				frame->addr.ysize = pixsize;
@@ -3135,7 +3061,7 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 			if (!cookie)
 				return -EINVAL;
 
-			ret = sc_get_dma_address(cookie, &frame->addr.cb);
+			ret = sc_get_dma_address(cookie, &frame->addr.cb, ctx);
 			if (ret != 0)
 				return ret;
 			frame->addr.ysize =
@@ -3176,7 +3102,7 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 			cookie = vb2_plane_cookie(vb2buf, 1);
 			if (!cookie)
 				return -EINVAL;
-			ret = sc_get_dma_address(cookie, &frame->addr.cb);
+			ret = sc_get_dma_address(cookie, &frame->addr.cb, ctx);
 			if (ret != 0)
 				return ret;
 			cookie = vb2_plane_cookie(vb2buf, 2);
@@ -3187,7 +3113,7 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 				BUG_ON(!sc->variant->blending);
 				BUG_ON(src_blend_frame == NULL);
 				ret = sc_get_dma_address(cookie,
-						&src_blend_frame->addr.y);
+						&src_blend_frame->addr.y, ctx);
 				src_blend_pixsize =
 					src_blend_frame->width *
 						src_blend_frame->height;
@@ -3210,7 +3136,7 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 						src_blend_frame->addr.ysize);
 				return 0;
 			}
-			ret = sc_get_dma_address(cookie, &frame->addr.cr);
+			ret = sc_get_dma_address(cookie, &frame->addr.cr, ctx);
 			if (ret != 0)
 				return ret;
 			frame->addr.ysize =
@@ -3227,24 +3153,14 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 				BUG_ON(!sc->variant->blending);
 				BUG_ON(src_blend_frame == NULL);
 				ret = sc_get_dma_address(cookie,
-						&src_blend_frame->addr.y);
+						&src_blend_frame->addr.y, ctx);
 				src_blend_pixsize =
 					src_blend_frame->width *
 						src_blend_frame->height;
 
-				if (frame->sc_fmt->pixelformat ==
-						V4L2_PIX_FMT_NV12N_RGB32) {
-					unsigned int w = frame->width;
-					unsigned int h = frame->height;
-					frame->addr.cb =
-					NV12N_CBCR_BASE(frame->addr.y, w, h);
-					frame->addr.ysize = NV12N_Y_SIZE(w, h);
-					frame->addr.cbsize = NV12N_CBCR_SIZE(w, h);
-				} else {
-					frame->addr.cb = frame->addr.y + pixsize;
-					frame->addr.ysize = pixsize;
-					frame->addr.cbsize = bytesize - pixsize;
-				}
+				frame->addr.cb = frame->addr.y + pixsize;
+				frame->addr.ysize = pixsize;
+				frame->addr.cbsize = bytesize - pixsize;
 
 				src_blend_frame->addr.ysize =
 				src_blend_pixsize *
@@ -3261,37 +3177,6 @@ static int sc_get_bufaddr(struct sc_dev *sc, struct vb2_buffer *vb2buf,
 				return 0;
 			}
 			dev_err(sc->dev, "Please check the num of comp\n");
-		}
-		break;
-	case 4:
-		if (frame->sc_fmt->num_planes == 2) {
-			if (frame->sc_fmt->is_alphablend_fmt) {
-				if (sc_fmt_is_ayv12(frame->sc_fmt->pixelformat)) {
-					unsigned int c_span;
-					c_span = ALIGN(frame->width >> 1, 16);
-					frame->addr.cr = frame->addr.y + pixsize;
-					frame->addr.ysize = pixsize;
-					frame->addr.crsize = c_span * (frame->height >> 1);
-					frame->addr.cb = frame->addr.cr + frame->addr.crsize;
-					frame->addr.cbsize = frame->addr.crsize;
-				}
-
-				cookie = vb2_plane_cookie(vb2buf, 1);
-				if (!cookie)
-					return -EINVAL;
-				BUG_ON(!sc->variant->blending);
-				BUG_ON(src_blend_frame == NULL);
-				ret = sc_get_dma_address(cookie,
-						&src_blend_frame->addr.y);
-				src_blend_pixsize =
-					src_blend_frame->width *
-						src_blend_frame->height;
-
-				src_blend_frame->addr.ysize =
-				src_blend_pixsize *
-					frame->sc_fmt->bitperpixel[1] >> 3;
-				return 0;
-			}
 		}
 		break;
 	default:
@@ -3351,15 +3236,15 @@ static void sc_m2m_device_run(void *priv)
 		ctx->src_blend_cfg.blend_src_crop_width = d_frame->crop.width;
 		ctx->src_blend_cfg.blend_src_crop_height = d_frame->crop.height;
 
-		sc_get_bufaddr(sc, v4l2_m2m_next_src_buf(ctx->m2m_ctx),
+		sc_get_bufaddr(sc, ctx, v4l2_m2m_next_src_buf(ctx->m2m_ctx),
 							s_frame,
 							src_blend_frame);
 	} else {
-		sc_get_bufaddr(sc, v4l2_m2m_next_src_buf(ctx->m2m_ctx),
+		sc_get_bufaddr(sc, ctx, v4l2_m2m_next_src_buf(ctx->m2m_ctx),
 							s_frame,
 							NULL);
 	}
-	sc_get_bufaddr(sc, v4l2_m2m_next_dst_buf(ctx->m2m_ctx), d_frame, NULL);
+	sc_get_bufaddr(sc, ctx, v4l2_m2m_next_dst_buf(ctx->m2m_ctx), d_frame, NULL);
 
 	sc_add_context_and_run(sc, ctx);
 }
@@ -3690,13 +3575,6 @@ static void sc_m2m1shot_get_bufaddr(struct sc_dev *sc,
 					NV12N_CBCR_BASE(frame->addr.y, w, h);
 				frame->addr.ysize = NV12N_Y_SIZE(w, h);
 				frame->addr.cbsize = NV12N_CBCR_SIZE(w, h);
-			} else if (frame->sc_fmt->pixelformat == V4L2_PIX_FMT_NV12N_10B) {
-				unsigned int w = frame->width;
-				unsigned int h = frame->height;
-				frame->addr.cb =
-					NV12N_10B_CBCR_BASE(frame->addr.y, w, h);
-				frame->addr.ysize = NV12N_Y_SIZE(w, h);
-				frame->addr.cbsize = NV12N_CBCR_SIZE(w, h);
 			} else {
 				frame->addr.cb = frame->addr.y + pixsize;
 				frame->addr.ysize = pixsize;
@@ -3838,57 +3716,6 @@ static int __attribute__((unused)) sc_sysmmu_fault_handler(struct iommu_domain *
 
 	return 0;
 }
-
-static int sc_busmon_handler(struct notifier_block *nb,
-				unsigned long l, void *buf)
-{
-	struct sc_dev *sc = container_of(nb, struct sc_dev, busmon_nb);
-	const char *state, *prot;
-	unsigned long flags;
-	struct sc_ctx *ctx = NULL;
-
-	dev_info(sc->dev, "--- SCALER busmon handler---\n");
-	if (sc->busmon_m &&
-		(strncmp((char *)buf, sc->busmon_m, strlen(sc->busmon_m))))
-		return 0;
-
-	state = (test_bit(DEV_RUN, &sc->state) ? "still running" : "stopped");
-	prot = (test_bit(DEV_CP, &sc->state) ? "protected" : "not protected");
-	dev_info(sc->dev, "scaler H/W is %s and %s\n", state, prot);
-
-	/*
-	 * Actually calling clk_get_rate() makes WARNING because this handler
-	 * run in softirq and clk_get_rate() try to get mutex_lock.
-	 * But the check of scaler clock rate is more important than WARNING.
-	 */
-	dev_info(sc->dev, "scaler clk is %ld kHz\n",
-			clk_get_rate(sc->aclk) / 1000);
-
-	spin_lock_irqsave(&sc->ctxlist_lock, flags);
-	if (!sc->current_ctx) {
-		dev_info(sc->dev, "scaler driver has no job\n");
-	} else {
-		dev_info(sc->dev, "scaler driver run a job\n");
-		ctx = sc->current_ctx;
-		sc->current_ctx = NULL;
-	}
-	spin_unlock_irqrestore(&sc->ctxlist_lock, flags);
-
-	if (test_bit(DEV_RUN, &sc->state)) {
-		sc_hwregs_dump(sc);
-		exynos_sysmmu_show_status(sc->dev);
-		clear_bit(DEV_RUN, &sc->state);
-	}
-
-	if (ctx)
-		sc_job_finish(sc, ctx);
-
-	return 0;
-}
-
-static struct notifier_block sc_busmon_nb = {
-	.notifier_call = sc_busmon_handler,
-};
 
 static int sc_clk_get(struct sc_dev *sc)
 {
@@ -4107,13 +3934,14 @@ static int sc_probe(struct platform_device *pdev)
 		}
 	}
 #endif
-	if (of_property_read_string(pdev->dev.of_node, "busmon,master",
-					(const char **)&sc->busmon_m))
-		sc->busmon_m = NULL;
 
 	if (of_property_read_u32(pdev->dev.of_node, "mscl,cfw",
 				(u32 *)&sc->cfw))
 		sc->cfw = 0;
+
+	if (of_find_property(pdev->dev.of_node, "prefetch-buffer,disable",
+				NULL))
+		sc->pb_disable = true;
 
 	ret = vb2_ion_attach_iommu(sc->alloc_ctx);
 	if (ret) {
@@ -4173,8 +4001,6 @@ static int sc_probe(struct platform_device *pdev)
 	pm_runtime_put(&pdev->dev);
 
 	iovmm_set_fault_handler(&pdev->dev, sc_sysmmu_fault_handler, sc);
-	sc->busmon_nb = sc_busmon_nb;
-	busmon_notifier_chain_register(&sc->busmon_nb);
 
 	dev_info(&pdev->dev,
 		"Driver probed successfully(version: %08x(%x))\n",
