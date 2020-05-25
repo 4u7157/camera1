@@ -22,11 +22,16 @@
 #define IORESOURCE_VRA_CH0	3
 #define IORESOURCE_VRA_CH1	4
 
+#define FIMC_IS_RESERVE_LIB_SIZE	(0x00600000)	/* 6MB */
+#define FIMC_IS_TAAISP_SIZE		(0x00080000)	/* 512KB */
+#define FIMC_IS_VRA_SIZE		(0x00800000)	/* 8MB */
+
 enum taaisp_chain_id {
 	ID_3AA_0 = 0,
 	ID_3AA_1 = 1,
 	ID_ISP_0 = 2,
 	ID_ISP_1 = 3,
+	ID_TPU   = 4,
 	ID_3AAISP_MAX
 };
 
@@ -42,6 +47,13 @@ enum hwip_interrupt_map {
 /* MC-Scaler */
 #define MCSC_INTR_MASK		(0x00000074)
 #define USE_DMA_BUFFER_INDEX	(0) /* 0 ~ 7 */
+#define MCSC_PRECISION		(20)
+#define MCSC_POLY_RATIO_UP	(8)
+#define MCSC_POLY_RATIO_DOWN	(4)
+#define MCSC_POST_RATIO_DOWN	(4)
+#define MCSC_POST_WA
+#define MCSC_POST_WA_SHIFT	(8)	/* 256 = 2^8 */
+
 enum mc_scaler_interrupt_map {
 	INTR_MC_SCALER_FRAME_END		= 0,
 	INTR_MC_SCALER_FRAME_START		= 1,

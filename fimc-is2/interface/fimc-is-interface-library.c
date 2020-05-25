@@ -11,6 +11,8 @@
 #include <linux/random.h>
 #include <linux/firmware.h>
 #include <linux/mm.h>
+#include <linux/kallsyms.h>
+#include <linux/stacktrace.h>
 
 #include <asm/cacheflush.h>
 #include <asm/pgtable.h>
@@ -75,6 +77,27 @@ int fimc_is_log_write(const char *str, ...)
 }
 
 #ifdef LIB_MEM_TRACK
+#ifdef CONFIG_STACKTRACE
+static void save_callstack(ulong *addrs)
+{
+	struct stack_trace trace;
+	int i;
+
+	trace.nr_entries = 0;
+	trace.max_entries = MEM_TRACK_ADDRS_COUNT;
+	trace.entries = addrs;
+	trace.skip = 3;
+	save_stack_trace(&trace);
+
+	if (trace.nr_entries != 0 &&
+			trace.entries[trace.nr_entries - 1] == ULONG_MAX)
+		trace.nr_entries--;
+
+	for (i = trace.nr_entries; i < MEM_TRACK_ADDRS_COUNT; i++)
+		addrs[i] = 0;
+}
+#endif
+
 static inline void add_alloc_track(int type, ulong addr, size_t size)
 {
 	struct fimc_is_lib_support *lib = &gPtr_lib_support;
@@ -103,6 +126,10 @@ static inline void add_alloc_track(int type, ulong addr, size_t size)
 		track->alloc.cpu = raw_smp_processor_id();
 		track->alloc.pid = current->pid;
 		track->alloc.when = cpu_clock(raw_smp_processor_id());
+
+#ifdef CONFIG_STACKTRACE
+		save_callstack(track->alloc.addrs);
+#endif
 	}
 }
 
@@ -127,6 +154,9 @@ static inline void add_free_track(int type, ulong addr)
 				track->free.pid = current->pid;
 				track->free.when = cpu_clock(raw_smp_processor_id());
 
+#ifdef CONFIG_STACKTRACE
+		save_callstack(track->alloc.addrs);
+#endif
 				found = 1;
 				break;
 			}
@@ -144,21 +174,39 @@ static void print_track(struct lib_mem_track *track)
 {
 	unsigned long long when;
 	ulong usec;
+#ifdef CONFIG_STACKTRACE
+	int i;
+#endif
 
-	pr_info("type: %d, addr: 0x%08lx, size: %zd, status: %d\n",
+	pr_info("leak detected type: %d, addr: 0x%08lx, size: %zd, status: %d\n",
 			track->type, track->addr, track->size, track->status);
 
 	when = track->alloc.when;
 	usec = do_div(when, NSEC_PER_SEC);
-	pr_info("\talloc: [%5lu.%06lu] from: 0x%08lx, cpu: %d, pid: %d\n",
+	pr_info("\tallocated : [%5lu.%06lu] from: 0x%08lx, cpu: %d, pid: %d\n",
 			(ulong)when, usec / NSEC_PER_USEC,
 			track->alloc.lr-1, track->alloc.cpu, track->alloc.pid);
+#ifdef CONFIG_STACKTRACE
+	for (i = 0; i < MEM_TRACK_ADDRS_COUNT; i++)
+		if (track->alloc.addrs[i])
+			print_ip_sym(track->alloc.addrs[i]);
+		else
+			break;
+#endif
 
 	when = track->free.when;
 	usec = do_div(when, NSEC_PER_SEC);
 	pr_info("\tfree:  [%5lu.%06lu] from: 0x%08lx, cpu: %d, pid: %d\n",
 			(ulong)when, usec / NSEC_PER_USEC,
 			track->free.lr-1, track->free.cpu, track->free.pid);
+
+#ifdef CONFIG_STACKTRACE
+	for (i = 0; i < MEM_TRACK_ADDRS_COUNT; i++)
+		if (track->free.addrs[i])
+			pr_info("\t%p\n", (void *)track->free.addrs[i]);
+		else
+			break;
+#endif
 }
 
 static void check_tracks(int status)
@@ -202,6 +250,7 @@ void *fimc_is_alloc_reserved_buffer(u32 size)
 	struct fimc_is_priv_buf *pb_lib = gPtr_lib_support.minfo->pb_lib;
 	struct fimc_is_lib_dma_buffer *reserved_buf = NULL;
 	u32 aligned_size = 0;
+	unsigned long flag;
 
 	if (size <= 0) {
 		err_lib("invalid size(%d)", size);
@@ -234,10 +283,20 @@ void *fimc_is_alloc_reserved_buffer(u32 size)
 		lib->reserved_lib_size += aligned_size;
 	}
 
+#ifdef ENABLE_DBG_EVENT
+	fimc_is_event_add_lib_mem(true,
+			current->comm,
+			reserved_buf->size,
+			reserved_buf->kvaddr,
+			reserved_buf->dvaddr);
+#endif
+
 	dbg_lib("alloc_reserved_buffer: kva(0x%lx) size(0x%x)\n",
 		reserved_buf->kvaddr, aligned_size);
 
+	spin_lock_irqsave(&lib->slock, flag);
 	list_add(&reserved_buf->list, &lib->lib_mem_list);
+	spin_unlock_irqrestore(&lib->slock, flag);
 #ifdef LIB_MEM_TRACK
 	add_alloc_track(MT_TYPE_RESERVED, reserved_buf->kvaddr, aligned_size);
 #endif
@@ -249,26 +308,34 @@ void fimc_is_free_reserved_buffer(void *buf)
 {
 	struct fimc_is_lib_support *lib = &gPtr_lib_support;
 	struct fimc_is_lib_dma_buffer *reserved_buf, *temp;
+	unsigned long flag;
 
 	if (buf == NULL)
 		return;
 
+	spin_lock_irqsave(&lib->slock, flag);
 	list_for_each_entry_safe(reserved_buf, temp, &lib->lib_mem_list, list) {
 		if ((void *)reserved_buf->kvaddr == buf) {
 #ifdef LIB_MEM_TRACK
 			add_free_track(MT_TYPE_RESERVED, (ulong)buf);
 #endif
-			if (reserved_buf->dvaddr)
-				lib->reserved_lib_size -= reserved_buf->size;
-			else
-				kfree((void *)reserved_buf->kvaddr);
+#ifdef ENABLE_DBG_EVENT
+			fimc_is_event_add_lib_mem(false,
+					current->comm,
+					reserved_buf->size,
+					reserved_buf->kvaddr,
+					reserved_buf->dvaddr);
+#endif
 
+			if (!reserved_buf->dvaddr)
+				kfree((void *)reserved_buf->kvaddr);
 			list_del(&reserved_buf->list);
 			kfree(reserved_buf);
 
 			break;
 		}
 	}
+	spin_unlock_irqrestore(&lib->slock, flag);
 }
 
 void *fimc_is_alloc_reserved_taaisp_dma_buffer(u32 size)
@@ -426,6 +493,9 @@ int fimc_is_translate_taaisp_kva_to_dva(ulong src_addr, u32 *target_addr)
 	if (src_addr < lib->minfo->kvaddr_taaisp) {
 		err_lib("translate_taaisp_kva_to_dva: Invalid kva(0x%lx)!!", src_addr);
 		*target_addr = 0x0;
+#ifdef CONFIG_STACKTRACE
+		WARN_ON(1);
+#endif
 		return 0;
 	}
 
@@ -446,6 +516,9 @@ int fimc_is_translate_vra_kva_to_dva(ulong src_addr, u32 *target_addr)
 	if (src_addr < lib->minfo->kvaddr_vra) {
 		err_lib("translate_vra_kva_to_dva: Invalid kva(0x%lx)!!", src_addr);
 		*target_addr = 0x0;
+#ifdef CONFIG_STACKTRACE
+		WARN_ON(1);
+#endif
 		return 0;
 	}
 
@@ -466,6 +539,9 @@ int fimc_is_translate_taaisp_dva_to_kva(u32 src_addr, ulong *target_addr)
 	if (src_addr < lib->minfo->dvaddr_taaisp) {
 		err_lib("translate_taaisp_dva_to_kva: Invalid dva(0x%x)!!", src_addr);
 		*target_addr = 0x0;
+#ifdef CONFIG_STACKTRACE
+		WARN_ON(1);
+#endif
 		return 0;
 	}
 
@@ -485,6 +561,9 @@ int fimc_is_translate_vra_dva_to_kva(u32 src_addr, ulong *target_addr)
 	if (src_addr < lib->minfo->dvaddr_vra) {
 		err_lib("translate_vra_dva_to_kva: Invalid dva(0x%x)!!", src_addr);
 		*target_addr = 0x0;
+#ifdef CONFIG_STACKTRACE
+		WARN_ON(1);
+#endif
 		return 0;
 	}
 
@@ -789,6 +868,7 @@ int fimc_is_timer_disable(void *timer)
 #define IRQ_ID_3AA1(x)		(x - (INTR_ID_BASE_OFFSET * 1))
 #define IRQ_ID_ISP0(x)		(x - (INTR_ID_BASE_OFFSET * 2))
 #define IRQ_ID_ISP1(x)		(x - (INTR_ID_BASE_OFFSET * 3))
+#define IRQ_ID_TPU(x)		(x - (INTR_ID_BASE_OFFSET * 4))
 #define valid_3aaisp_intr_index(intr_index) \
 	(0 <= intr_index && intr_index < INTR_HWIP_MAX)
 
@@ -811,6 +891,9 @@ int fimc_is_register_interrupt(struct hwip_intr_handler info)
 		break;
 	case ID_ISP_1:
 		intr_index = IRQ_ID_ISP1(info.id);
+		break;
+	case ID_TPU:
+		intr_index = IRQ_ID_TPU(info.id);
 		break;
 	default:
 		err_lib("invalid chaind_id(%d)", info.chain_id);
@@ -863,6 +946,9 @@ int fimc_is_unregister_interrupt(u32 intr_id, u32 chain_id)
 		break;
 	case ID_ISP_1:
 		intr_index = IRQ_ID_ISP1(intr_id);
+		break;
+	case ID_TPU:
+		intr_index = IRQ_ID_TPU(intr_id);
 		break;
 	default:
 		err_lib("invalid chaind_id(%d)", chain_id);
@@ -1137,6 +1223,9 @@ ulong get_reg_addr(u32 id)
 	case ID_ISP_1:
 		hw_id = DEV_HW_ISP1;
 		break;
+	case ID_TPU:
+		hw_id = DEV_HW_TPU;
+		break;
 	default:
 		warn_lib("get_reg_addr: invalid id(%d)\n", id);
 		return 0;
@@ -1275,9 +1364,11 @@ int lib_task_init(void)
 			err_lib("failed to create library task_handler(%d)", i);
 			return -ENOMEM;
 		}
+
 #ifdef ENABLE_FPSIMD_FOR_USER
 		fpsimd_set_task_using(lib->task_taaisp[i].task);
 #endif
+
 		/* TODO: consider task priority group worker */
 		param.sched_priority = lib_get_task_priority(i);
 		ret = sched_setscheduler_nocheck(lib->task_taaisp[i].task, SCHED_FIFO, &param);
@@ -1297,7 +1388,8 @@ int lib_task_init(void)
 #ifdef SET_CPU_AFFINITY
 		cpu = lib_get_task_affinity(i);
 		ret = set_cpus_allowed_ptr(lib->task_taaisp[i].task, cpumask_of(cpu));
-		dbg_lib("lib_task_init: task(%d) affinity cpu(%d) (%d)\n", i, cpu, ret);
+		if (ret)
+			warn_lib("lib_task_init: task(%d) affinity cpu(%d) (%d)\n", i, cpu, ret);
 #endif
 	}
 
@@ -1313,10 +1405,8 @@ int lib_support_init(void)
 
 	/* task initialization */
 	ret = lib_task_init();
-	if (ret) {
-		err_lib("lib_support_init: task_init is failed!! (%d)", ret);
-		return 0;
-	}
+	if (ret)
+		warn_lib("lib_support_init: task_init is failed!! (%d)", ret);
 
 #ifdef LIB_MEM_TRACK
 	INIT_LIST_HEAD(&lib->list_of_tracks);
@@ -1453,9 +1543,21 @@ void set_os_system_funcs(os_system_func_t *funcs)
 	funcs[44] = (os_system_func_t)fimc_is_alloc_reserved_buffer;
 	funcs[45] = (os_system_func_t)fimc_is_free_reserved_buffer;
 	funcs[46] = (os_system_func_t)get_reg_addr;
-
 	funcs[48] = (os_system_func_t)fimc_is_lib_flush_task_handler;
 }
+
+#ifdef USE_RTA_BINARY
+void set_os_system_funcs_for_rta(os_system_func_t *funcs)
+{
+	funcs[0] = (os_system_func_t)fimc_is_log_write;
+	funcs[1] = (os_system_func_t)fimc_is_log_write_console;
+
+	funcs[10] = (os_system_func_t)fimc_is_alloc_reserved_buffer;
+	funcs[11] = (os_system_func_t)fimc_is_free_reserved_buffer;
+
+	funcs[20] = (os_system_func_t)fimc_is_assert;
+}
+#endif
 
 static int fimc_is_memory_page_range(pte_t *ptep, pgtable_t token, unsigned long addr,
 			void *data)
@@ -1585,11 +1687,14 @@ int fimc_is_load_bin(void)
 		{PTE_RDONLY, PFN_UP(LIB_VRA_CODE_SIZE), lib_vra},
 		{PTE_RDONLY, PFN_UP(LIB_ISP_CODE_SIZE), lib_isp},
 	};
+#ifdef USE_RTA_BINARY
+	ulong lib_rta = RTA_LIB_ADDR;
+	struct fimc_is_memory_attribute rta_memory_attribute = {
+		PTE_RDONLY, PFN_UP(LIB_RTA_CODE_SIZE), lib_rta};
+#endif
 
 	if (lib->binary_load_flg)
 		return ret;
-
-	set_os_system_funcs(os_system_funcs);
 
 	/* load library */
 	for (i = 0; i < ARRAY_SIZE(memory_attribute); i++) {
@@ -1622,6 +1727,9 @@ int fimc_is_load_bin(void)
 		}
 	}
 
+	lib->log_ptr = 0;
+
+	set_os_system_funcs(os_system_funcs);
 	/* call start_up function for SDK binary */
 #ifdef ENABLE_FPSIMD_FOR_USER
 	fpsimd_get();
@@ -1629,6 +1737,45 @@ int fimc_is_load_bin(void)
 	fpsimd_put();
 #else
 	((start_up_func_t)lib_isp)((void **)os_system_funcs);
+#endif
+
+#ifdef USE_RTA_BINARY
+	/* load RTA library */
+	ret = fimc_is_memory_attribute_nxrw(&rta_memory_attribute);
+	if (ret) {
+		err_lib("failed to change into NX memory attribute (%d)", ret);
+		return ret;
+	}
+
+	setup_binary_loader(&bin, 3, -EAGAIN, NULL, NULL);
+	ret = request_binary(&bin, FIMC_IS_ISP_LIB_SDCARD_PATH,
+						FIMC_IS_RTA_LIB, device);
+	if (ret) {
+		err_lib("failed to load RTA library (%d)", ret);
+		return ret;
+	}
+	info_lib("binary info[RTA] - type: C/D, addr: %#lx, size: 0x%lx from: %s\n",
+			lib_rta, bin.size,
+			was_loaded_by(&bin) ? "built-in" : "user-provided");
+	memcpy((void *)lib_rta, bin.data, bin.size);
+	fimc_is_ischain_version(FIMC_IS_BIN_LIBRARY, bin.data, bin.size);
+	release_binary(&bin);
+
+	ret = fimc_is_memory_attribute_rox(&rta_memory_attribute);
+	if (ret) {
+		err_lib("failed to change into EX memory attribute (%d)", ret);
+		return ret;
+	}
+
+	set_os_system_funcs_for_rta(os_system_funcs);
+	/* call start_up function for RTA binary */
+#ifdef ENABLE_FPSIMD_FOR_USER
+	fpsimd_get();
+	((rta_start_up_func_t)lib_rta)(NULL, (void **)os_system_funcs);
+	fpsimd_put();
+#else
+	((rta_start_up_func_t)lib_rta)(NULL, (void **)os_system_funcs);
+#endif
 #endif
 
 	ret = lib_support_init();
@@ -1641,7 +1788,6 @@ int fimc_is_load_bin(void)
 	spin_lock_init(&svc_slock);
 
 	lib->binary_load_flg = true;
-	lib->log_ptr = 0;
 
 	/* warning for reserved memory management */
 	if (lib->reserved_lib_size) {
@@ -1659,6 +1805,7 @@ int fimc_is_load_bin(void)
 	}
 
 	INIT_LIST_HEAD(&lib->lib_mem_list);
+	spin_lock_init(&lib->slock);
 	INIT_LIST_HEAD(&lib->taaisp_mem_list);
 	INIT_LIST_HEAD(&lib->vra_mem_list);
 
@@ -1681,11 +1828,14 @@ int fimc_is_load_bin(void)
 		PTE_RDONLY, PFN_UP(LIB_ISP_CODE_SIZE), lib_isp};
 	struct fimc_is_memory_attribute vra_memory_attribute = {
 		PTE_RDONLY, PFN_UP(LIB_VRA_CODE_SIZE), lib_vra};
+#ifdef USE_RTA_BINARY
+	ulong lib_rta = RTA_LIB_ADDR;
+	struct fimc_is_memory_attribute rta_memory_attribute = {
+		PTE_RDONLY, PFN_UP(LIB_RTA_CODE_SIZE), lib_rta};
+#endif
 
 	if (lib->binary_load_flg)
 		return ret;
-
-	set_os_system_funcs(os_system_funcs);
 
 	/* load SDK library */
 	ret = fimc_is_memory_attribute_nxrw(&isp_memory_attribute);
@@ -1740,6 +1890,9 @@ int fimc_is_load_bin(void)
 		return ret;
 	}
 
+	lib->log_ptr = 0;
+
+	set_os_system_funcs(os_system_funcs);
 	/* call start_up function for SDK binary */
 #ifdef ENABLE_FPSIMD_FOR_USER
 	fpsimd_get();
@@ -1747,6 +1900,45 @@ int fimc_is_load_bin(void)
 	fpsimd_put();
 #else
 	((start_up_func_t)lib_isp)((void **)os_system_funcs);
+#endif
+
+#ifdef USE_RTA_BINARY
+	/* load RTA library */
+	ret = fimc_is_memory_attribute_nxrw(&rta_memory_attribute);
+	if (ret) {
+		err_lib("failed to change into NX memory attribute (%d)", ret);
+		return ret;
+	}
+
+	setup_binary_loader(&bin, 3, -EAGAIN, NULL, NULL);
+	ret = request_binary(&bin, FIMC_IS_ISP_LIB_SDCARD_PATH,
+						FIMC_IS_RTA_LIB, device);
+	if (ret) {
+		err_lib("failed to load RTA library (%d)", ret);
+		return ret;
+	}
+	info_lib("binary info[RTA] - type: C/D, addr: %#lx, size: 0x%lx from: %s\n",
+			lib_rta, bin.size,
+			was_loaded_by(&bin) ? "built-in" : "user-provided");
+	memcpy((void *)lib_rta, bin.data, bin.size);
+	fimc_is_ischain_version(FIMC_IS_BIN_LIBRARY, bin.data, bin.size);
+	release_binary(&bin);
+
+	ret = fimc_is_memory_attribute_rox(&rta_memory_attribute);
+	if (ret) {
+		err_lib("failed to change into EX memory attribute (%d)", ret);
+		return ret;
+	}
+
+	set_os_system_funcs_for_rta(os_system_funcs);
+	/* call start_up function for RTA binary */
+#ifdef ENABLE_FPSIMD_FOR_USER
+	fpsimd_get();
+	((rta_start_up_func_t)lib_rta)(NULL, (void **)os_system_funcs);
+	fpsimd_put();
+#else
+	((rta_start_up_func_t)lib_rta)(NULL, (void **)os_system_funcs);
+#endif
 #endif
 
 	ret = lib_support_init();
@@ -1759,7 +1951,6 @@ int fimc_is_load_bin(void)
 	spin_lock_init(&svc_slock);
 
 	lib->binary_load_flg = true;
-	lib->log_ptr = 0;
 
 	/* warning for reserved memory management */
 	if (lib->reserved_lib_size) {

@@ -13,15 +13,9 @@
 #define FIMC_IS_HW_H
 
 #include "fimc-is-type.h"
-
-/* TODO: remove defined config to code clean */
-#if defined(CONFIG_FIMC_IS_V4_0_0)
-#include "../ischain/fimc-is-v4_0_0/fimc-is-hw-chain.h"
-#elif defined(CONFIG_FIMC_IS_V3_11_0)
-#include "../ischain/fimc-is-v3_11_0/fimc-is-hw-chain.h"
-#elif defined(CONFIG_FIMC_IS_V5_10_0)
-#include "../ischain/fimc-is-v5_10_0/fimc-is-hw-chain.h"
-#endif
+#include "fimc-is-hw-chain.h"
+#include "fimc-is-framemgr.h"
+#include "fimc-is-device-ischain.h"
 
 #define CSI_VIRTUAL_CH_0	0
 #define CSI_VIRTUAL_CH_1	1
@@ -54,6 +48,10 @@
 #define HW_FORMAT_RAW14 	0x2D
 #define HW_FORMAT_USER		0x30
 #define HW_FORMAT_UNKNOWN	0x3F
+
+#define SHARED_META_INIT	0
+#define SHARED_META_SHOT	1
+#define SHARED_META_SHOT_DONE	2
 
 /*
  * Get each lane speed (Mbps)
@@ -142,6 +140,8 @@ enum csis_hw_control_id {
 	CSIS_CTRL_INTERLEAVE_MODE,
 	CSIS_CTRL_LINE_RATIO,
 	CSIS_CTRL_BUS_WIDTH,
+	CSIS_CTRL_DMA_ABORT_REQ,
+	CSIS_CTRL_ENABLE_LINE_IRQ,
 };
 
 /*
@@ -217,6 +217,7 @@ enum flite_hw_control_id {
  * MIPI-CSIS H/W APIS
  * ******************
  */
+void csi_hw_phy_otp_config(u32 __iomem *base_reg, u32 instance);
 int csi_hw_reset(u32 __iomem *base_reg);
 int csi_hw_s_settle(u32 __iomem *base_reg, u32 settle);
 int csi_hw_s_lane(u32 __iomem *base_reg, struct fimc_is_image *img, u32 lanes, u32 mipi_speed);
@@ -240,6 +241,30 @@ int csi_hw_s_config_dma(u32 __iomem *base_reg, u32 channel, struct fimc_is_vci_c
  * ISCHAIN AND CAMIF CONFIGURE H/W APIS
  * ************************************
  */
+/*
+ * It's for hw version
+ */
+#define HW_SET_VERSION(first, second, third, fourth) \
+	(((first) << 24) | ((second) << 16) | ((third) << 8) | ((fourth) << 0))
+
+/*
+ * This enum will be used in fimc_is_hw_s_ctrl api.
+ */
+enum hw_s_ctrl_id {
+	HW_S_CTRL_FULL_BYPASS,
+	HW_S_CTRL_CHAIN_IRQ,
+	HW_S_CTRL_HWFC_IDX_RESET,
+};
+
+/*
+ * This enum will be used in fimc_is_hw_g_ctrl api.
+ */
+enum hw_g_ctrl_id {
+	HW_G_CTRL_FRM_DONE_WITH_DMA,
+	HW_G_CTRL_HAS_MCSC,
+	HW_G_CTRL_HAS_VRA_CH1_ONLY,
+};
+
 int fimc_is_hw_group_cfg(void *group_data);
 int fimc_is_hw_group_open(void *group_data);
 int fimc_is_hw_camif_cfg(void *sensor_data);
@@ -250,10 +275,11 @@ int fimc_is_hw_get_irq(void *itfc_data, void *pdev_data, int hw_id);
 int fimc_is_hw_request_irq(void *itfc_data, int hw_id);
 int fimc_is_hw_slot_id(int hw_id);
 int fimc_is_get_hw_list(int group_id, int *hw_list);
-int fimc_is_hw_set_fullbypass(void *itfc_data, int hw_id, bool bypass);
-int fimc_is_hw_set_chain_interrupt(void *itfc_data);
-bool fimc_is_hw_frame_done_with_dma(void);
-bool fimc_is_has_mcsc(void);
+int fimc_is_hw_s_ctrl(void *itfc_data, int hw_id, enum hw_s_ctrl_id id, void *val);
+int fimc_is_hw_g_ctrl(void *itfc_data, int hw_id, enum hw_g_ctrl_id id, void *val);
+int fimc_is_hw_query_cap(void *cap_data, int hw_id);
+int fimc_is_hw_shared_meta_update(struct fimc_is_device_ischain *device,
+		struct fimc_is_group *group, struct fimc_is_frame *frame, int shot_done_flag);
 /*
  * *****************
  * FIMC-BNS H/W APIS

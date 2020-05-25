@@ -494,6 +494,9 @@ static int fimc_is_mxp_video_dqbuf(struct file *file, void *priv,
 	if (ret)
 		merr("dqbuf is fail(%d)", vctx, ret);
 
+	/* hwfc reset during dqbuf timing */
+	fimc_is_hw_s_ctrl(vctx, vctx->video->id, HW_S_CTRL_HWFC_IDX_RESET, (void *)1);
+
 	return ret;
 }
 
@@ -795,7 +798,7 @@ static void fimc_is_mxp_buffer_finish(struct vb2_buffer *vb)
 
 const struct vb2_ops fimc_is_mxp_qops = {
 	.queue_setup		= fimc_is_mxp_queue_setup,
-	.buf_init			= fimc_is_buffer_init,
+	.buf_init		= fimc_is_buffer_init,
 	.buf_prepare		= fimc_is_mxp_buffer_prepare,
 	.buf_queue		= fimc_is_mxp_buffer_queue,
 	.buf_finish		= fimc_is_mxp_buffer_finish,

@@ -20,6 +20,9 @@
 #include "fimc-is-video.h"
 
 extern struct device *fimc_is_dev;
+#ifdef FIXED_SENSOR_DEBUG
+extern struct fimc_is_sysfs_sensor sysfs_sensor;
+#endif
 
 struct fimc_is_device_sensor_peri *find_peri_by_cis_id(struct fimc_is_device_sensor *device,
 							u32 cis)
@@ -30,6 +33,8 @@ struct fimc_is_device_sensor_peri *find_peri_by_cis_id(struct fimc_is_device_sen
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 
 	BUG_ON(!device);
+	BUG_ON(device->instance >= FIMC_IS_SENSOR_COUNT);
+
 	resourcemgr = device->resourcemgr;
 	module_enum = device->module_enum;
 	BUG_ON(!module_enum);
@@ -141,6 +146,37 @@ struct fimc_is_device_sensor_peri *find_peri_by_preprocessor_id(struct fimc_is_d
 	if (mindex >= mmax) {
 		merr("preprocessor(%d) is not found", device, preprocessor);
 		printk("preprocessor is not found");
+	}
+
+	return sensor_peri;
+}
+
+struct fimc_is_device_sensor_peri *find_peri_by_ois_id(struct fimc_is_device_sensor *device,
+							u32 ois)
+{
+	u32 mindex = 0, mmax = 0;
+	struct fimc_is_module_enum *module_enum = NULL;
+	struct fimc_is_resourcemgr *resourcemgr = NULL;
+	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
+
+	BUG_ON(!device);
+	resourcemgr = device->resourcemgr;
+	module_enum = device->module_enum;
+	BUG_ON(!module_enum);
+
+	if (unlikely(resourcemgr == NULL))
+		return NULL;
+
+	mmax = atomic_read(&resourcemgr->rsccount_module);
+	for (mindex = 0; mindex < mmax; mindex++) {
+		if (module_enum[mindex].ext.ois_con.product_name == ois) {
+			sensor_peri = (struct fimc_is_device_sensor_peri *)module_enum[mindex].private_data;
+			break;
+		}
+	}
+
+	if (mindex >= mmax) {
+		merr("ois(%d) is not found", device, ois);
 	}
 
 	return sensor_peri;
@@ -372,6 +408,7 @@ void fimc_is_sensor_deinit_sensor_thread(struct fimc_is_device_sensor_peri *sens
 			err("kthread_stop fail");
 
 		sensor_peri->sensor_task = NULL;
+		info("%s: \n", __func__);
 	}
 }
 
@@ -381,10 +418,16 @@ int fimc_is_sensor_init_mode_change_thread(struct fimc_is_device_sensor_peri *se
 	struct sched_param param = {.sched_priority = MAX_RT_PRIO - 1};
 
 	/* Always first applyed to mode change when camera on */
-	sensor_peri->mode_change_flag = true;
+	sensor_peri->mode_change_first = true;
 
 	init_kthread_worker(&sensor_peri->mode_change_worker);
 	sensor_peri->mode_change_task = kthread_run(kthread_worker_fn, &sensor_peri->mode_change_worker, "fimc_is_sensor_mode_change");
+	if (IS_ERR_OR_NULL(sensor_peri->mode_change_task)) {
+		err("failed to create kthread");
+		sensor_peri->mode_change_task = NULL;
+		return -EFAULT;
+	}
+
 	ret = sched_setscheduler_nocheck(sensor_peri->mode_change_task, SCHED_FIFO, &param);
 	if (ret) {
 		err("sched_setscheduler_nocheck is fail(%d)\n", ret);
@@ -403,6 +446,7 @@ void fimc_is_sensor_deinit_mode_change_thread(struct fimc_is_device_sensor_peri 
 			err("kthread_stop fail");
 
 		sensor_peri->mode_change_task = NULL;
+		info("%s: \n", __func__);
 	}
 }
 
@@ -425,6 +469,7 @@ int fimc_is_sensor_initial_setting_low_exposure(struct fimc_is_device_sensor_per
 			sensor_peri->cis.cis_data->low_expo_start,
 			sensor_peri->cis.cis_data->low_expo_start);
 
+#if !defined(DISABLE_LIB)
 	sensor_peri->sensor_interface.cis_itf_ops.request_reset_expo_gain(&sensor_peri->sensor_interface,
 			sensor_peri->cis.cis_data->low_expo_start,
 			1000,
@@ -434,7 +479,7 @@ int fimc_is_sensor_initial_setting_low_exposure(struct fimc_is_device_sensor_per
 			1000,
 			1000,
 			1000);
-
+#endif
 	fimc_is_sensor_set_cis_uctrl_list(sensor_peri,
 			sensor_peri->cis.cis_data->low_expo_start,
 			sensor_peri->cis.cis_data->low_expo_start,
@@ -447,28 +492,52 @@ int fimc_is_sensor_initial_setting_low_exposure(struct fimc_is_device_sensor_per
 
 void fimc_is_sensor_mode_change_work_fn(struct kthread_work *work)
 {
-		struct fimc_is_device_sensor_peri *sensor_peri;
-		struct fimc_is_cis *cis;
+	struct fimc_is_device_sensor_peri *sensor_peri;
+	struct fimc_is_cis *cis;
+#ifdef CONFIG_SENSOR_RETENTION_USE
+	struct fimc_is_module_enum *module;
+#endif
 
-		sensor_peri = container_of(work, struct fimc_is_device_sensor_peri, mode_change_work);
+	sensor_peri = container_of(work, struct fimc_is_device_sensor_peri, mode_change_work);
 
-		cis = (struct fimc_is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(sensor_peri->subdev_cis);
 
-		CALL_CISOPS(cis, cis_mode_change, cis->subdev, cis->cis_data->sens_config_index_cur);
+#if defined(CONFIG_SENSOR_RETENTION_USE)
+	module = sensor_peri->module;
+
+	/* retention mode crc check */
+	if (test_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state)) {
+		CALL_CISOPS(cis, cis_retention_crc_check, cis->subdev);
+	} else {
+		/* retention mode sram write global setting */
+		CALL_CISOPS(cis, cis_set_global_setting, cis->subdev);
+
+		/* retention mode sram write mode setting */
+		CALL_CISOPS(cis, cis_retention_prepare, cis->subdev);
+	}
+#else
+	/* cis global setting is only set to first mode change time */
+	if (sensor_peri->mode_change_first == true)
+		CALL_CISOPS(cis, cis_set_global_setting, cis->subdev);
+#endif
+
+	CALL_CISOPS(cis, cis_mode_change, cis->subdev, cis->cis_data->sens_config_index_cur);
+
+	sensor_peri->mode_change_first = false;
 }
 
 int fimc_is_sensor_mode_change(struct fimc_is_cis *cis, u32 mode)
 {
+	int ret = 0;
+	struct fimc_is_device_sensor_peri *sensor_peri;
 
-		int ret = 0;
-		struct fimc_is_device_sensor_peri *sensor_peri;
+	BUG_ON(!cis);
+	BUG_ON(!cis->cis_data);
 
-		BUG_ON(!cis);
-		BUG_ON(!cis->cis_data);
+	sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
 
-		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
-
-		queue_kthread_work(&sensor_peri->mode_change_worker, &sensor_peri->mode_change_work);
+	CALL_CISOPS(cis, cis_data_calculation, cis->subdev, cis->cis_data->sens_config_index_cur);
+	queue_kthread_work(&sensor_peri->mode_change_worker, &sensor_peri->mode_change_work);
 
 	return ret;
 }
@@ -555,17 +624,11 @@ void fimc_is_sensor_flash_fire_work(struct work_struct *data)
 	device = v4l2_get_subdev_hostdata(sensor_peri->subdev_flash);
 	BUG_ON(!device);
 
-	mutex_lock(&sensor_peri->cis.control_lock);
-	if (!sensor_peri->cis.cis_data->stream_on) {
-		warn("[%s] already stream off\n", __func__);
-		goto p_err_mutext;
-	}
-
 	/* sensor stream off */
 	ret = CALL_CISOPS(&sensor_peri->cis, cis_stream_off, sensor_peri->subdev_cis);
 	if (ret < 0) {
 		err("[%s] stream off fail\n", __func__);
-		goto p_err_streamoff;
+		goto p_err;
 	}
 
 	ret = fimc_is_sensor_wait_streamoff(device);
@@ -692,14 +755,12 @@ void fimc_is_sensor_flash_fire_work(struct work_struct *data)
 		}
 	}
 
-p_err_streamoff:
+p_err:
 	/* sensor stream on */
 	ret = CALL_CISOPS(&sensor_peri->cis, cis_stream_on, sensor_peri->subdev_cis);
 	if (ret < 0) {
 		err("[%s] stream on fail\n", __func__);
 	}
-p_err_mutext:
-	mutex_unlock(&sensor_peri->cis.control_lock);
 }
 
 void fimc_is_sensor_flash_expire_handler(unsigned long data)
@@ -1155,21 +1216,22 @@ void fimc_is_sensor_peri_probe(struct fimc_is_device_sensor_peri *sensor_peri)
 	INIT_WORK(&sensor_peri->actuator.actuator_data.actuator_work, fimc_is_sensor_peri_m2m_actuator);
 
 	hrtimer_init(&sensor_peri->actuator.actuator_data.afwindow_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-
-	mutex_init(&sensor_peri->cis.control_lock);
 }
 
 int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 					bool on)
 {
 	int ret = 0;
+	int i = 0;
 	struct v4l2_subdev *subdev_module;
 	struct fimc_is_module_enum *module;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 	struct v4l2_subdev *subdev_cis = NULL;
 	struct v4l2_subdev *subdev_preprocessor = NULL;
+	struct v4l2_subdev *subdev_ois = NULL;
 	struct fimc_is_cis *cis = NULL;
 	struct fimc_is_preprocessor *preprocessor = NULL;
+	struct fimc_is_ois *ois = NULL;
 
 	BUG_ON(!device);
 
@@ -1207,6 +1269,14 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 		BUG_ON(!preprocessor);
 	}
 
+	subdev_ois = sensor_peri->subdev_ois;
+	if (subdev_ois) {
+		ois = (struct fimc_is_ois *)v4l2_get_subdevdata(subdev_ois);
+		BUG_ON(!ois);
+	} else {
+		dbg("[sen:%d] no subdev_ois", module->sensor_id);
+	}
+
 	ret = fimc_is_sensor_peri_debug_fixed((struct fimc_is_device_sensor *)v4l2_get_subdev_hostdata(subdev_module));
 	if (ret) {
 		err("fimc_is_sensor_peri_debug_fixed is fail(%d)", ret);
@@ -1221,11 +1291,7 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 		flush_kthread_work(&sensor_peri->mode_change_work);
 
 		/* stream on sequence */
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-		if (cis->need_mode_change == false && cis->use_initial_ae == false) {
-#else
 		if (cis->need_mode_change == false) {
-#endif
 			/* only first time after camera on */
 			fimc_is_sensor_initial_setting_low_exposure(sensor_peri);
 			cis->need_mode_change = true;
@@ -1243,7 +1309,7 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 				goto p_err;
 			}
 
-			ret = CALL_PREPROPOPS(preprocessor, preprocessor_mode_change, subdev_preprocessor, device->cfg->mode);
+			ret = CALL_PREPROPOPS(preprocessor, preprocessor_mode_change, subdev_preprocessor, device);
 			if (ret) {
 				err("[SEN:%d] v4l2_subdev_call(preprocessor_mode_change) is fail(%d)",
 						module->sensor_id, ret);
@@ -1258,12 +1324,19 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 			}
 		}
 
+		if (subdev_ois) {
+			ret = CALL_OISOPS(&sensor_peri->ois, ois_mode_change, sensor_peri->subdev_ois, ois->ois_mode);
+			if (ret < 0) {
+				err("[SEN:%d] v4l2_subdev_call(ois_mode_change, on:%d) is fail(%d)",
+						module->sensor_id, on, ret);
+				goto p_err;
+			}
+		}
+
 		ret = CALL_CISOPS(cis, cis_stream_on, subdev_cis);
 	} else {
 		/* stream off sequence */
-		mutex_lock(&cis->control_lock);
 		ret = CALL_CISOPS(cis, cis_stream_off, subdev_cis);
-		mutex_unlock(&cis->control_lock);
 		if (subdev_preprocessor){
 			ret = CALL_PREPROPOPS(preprocessor, preprocessor_stream_off, subdev_preprocessor);
 			if (ret) {
@@ -1278,6 +1351,8 @@ int fimc_is_sensor_peri_s_stream(struct fimc_is_device_sensor *device,
 		hrtimer_cancel(&sensor_peri->actuator.actuator_data.afwindow_timer);
 		memset(&sensor_peri->cis.cur_sensor_uctrl, 0, sizeof(camera2_sensor_uctl_t));
 		memset(&sensor_peri->cis.expecting_sensor_dm[0], 0, sizeof(camera2_sensor_dm_t) * EXPECT_DM_NUM);
+		for (i = 0; i < CAM2P0_UCTL_LIST_SIZE; i++)
+			memset(&sensor_peri->cis.sensor_ctls[i].cur_cam20_sensor_udctrl, 0, sizeof(camera2_sensor_uctl_t));
 	}
 	if (ret) {
 		err("[SEN:%d] v4l2_subdev_call(s_stream, on:%d) is fail(%d)",
@@ -1319,9 +1394,11 @@ int fimc_is_sensor_peri_s_frame_duration(struct fimc_is_device_sensor *device,
 	}
 	sensor_peri = (struct fimc_is_device_sensor_peri *)module->private_data;
 
-#if defined(FIXED_FPS_DEBUG)
-	frame_duration = FPS_TO_DURATION_US(FIXED_FPS_VALUE);
-	dbg_sensor("FIXED_FPS_DEBUG = %d\n", FIXED_FPS_VALUE);
+#ifdef FIXED_SENSOR_DEBUG
+	if (unlikely(sysfs_sensor.is_en == true)) {
+		frame_duration = FPS_TO_DURATION_US(sysfs_sensor.frame_duration);
+		dbg_sensor("sysfs_sensor.frame_duration = %d\n", sysfs_sensor.frame_duration);
+	}
 #endif
 
 	ret = CALL_CISOPS(&sensor_peri->cis, cis_set_frame_duration, sensor_peri->subdev_cis, frame_duration);
@@ -1367,10 +1444,12 @@ int fimc_is_sensor_peri_s_exposure_time(struct fimc_is_device_sensor *device,
 		goto p_err;
 	}
 
-#if defined(FIXED_EXPOSURE_DEBUG)
-	long_exposure_time = FIXED_EXPOSURE_VALUE;
-	short_exposure_time = FIXED_EXPOSURE_VALUE;
-	dbg_sensor("FIXED_EXPOSURE_DEBUG = %d\n", FIXED_EXPOSURE_VALUE);
+#ifdef FIXED_SENSOR_DEBUG
+	if (unlikely(sysfs_sensor.is_en == true)) {
+		long_exposure_time = sysfs_sensor.long_exposure_time;
+		short_exposure_time = sysfs_sensor.short_exposure_time;
+		dbg_sensor("exposure = %d %d\n", long_exposure_time, short_exposure_time);
+	}
 #endif
 
 	exposure.long_val = long_exposure_time;
@@ -1418,10 +1497,12 @@ int fimc_is_sensor_peri_s_analog_gain(struct fimc_is_device_sensor *device,
 		goto p_err;
 	}
 
-#if defined(FIXED_AGAIN_DEBUG)
-	long_analog_gain = FIXED_AGAIN_VALUE * 10;
-	short_analog_gain = FIXED_AGAIN_VALUE * 10;
-	dbg_sensor("FIXED_AGAIN_DEBUG = %d\n", FIXED_AGAIN_VALUE);
+#ifdef FIXED_SENSOR_DEBUG
+	if (unlikely(sysfs_sensor.is_en == true)) {
+		long_analog_gain = sysfs_sensor.long_analog_gain * 10;
+		short_analog_gain = sysfs_sensor.short_analog_gain * 10;
+		dbg_sensor("again = %d %d\n", sysfs_sensor.long_analog_gain, sysfs_sensor.short_analog_gain);
+	}
 #endif
 
 	again.long_val = long_analog_gain;
@@ -1471,10 +1552,12 @@ int fimc_is_sensor_peri_s_digital_gain(struct fimc_is_device_sensor *device,
 		goto p_err;
 	}
 
-#if defined(FIXED_DGAIN_DEBUG)
-	long_digital_gain = FIXED_DGAIN_VALUE * 10;
-	short_digital_gain = FIXED_DGAIN_VALUE * 10;
-	dbg_sensor("FIXED_DGAIN_DEBUG = %d\n", FIXED_DGAIN_VALUE);
+#ifdef FIXED_SENSOR_DEBUG
+	if (unlikely(sysfs_sensor.is_en == true)) {
+		long_digital_gain = sysfs_sensor.long_digital_gain * 10;
+		short_digital_gain = sysfs_sensor.short_digital_gain * 10;
+		dbg_sensor("dgain = %d %d\n", sysfs_sensor.long_digital_gain, sysfs_sensor.short_digital_gain);
+	}
 #endif
 
 	dgain.long_val = long_digital_gain;
@@ -1581,40 +1664,45 @@ int fimc_is_sensor_peri_debug_fixed(struct fimc_is_device_sensor *device)
 		goto p_err;
 	}
 
-#ifdef FIXED_FPS_DEBUG
-	dbg_sensor("FIXED_FPS_DEBUG = %d\n", FIXED_FPS_VALUE);
-	if (fimc_is_sensor_peri_s_frame_duration(device, FPS_TO_DURATION_US(FIXED_FPS_VALUE))) {
-		err("failed to set frame duration : %d\n - %d",
-			FIXED_FPS_VALUE, ret);
-		goto p_err;
+	if (unlikely(sysfs_sensor.is_en == true)) {
+		dbg_sensor("sysfs_sensor.frame_duration = %d\n", sysfs_sensor.frame_duration);
+		if (fimc_is_sensor_peri_s_frame_duration(device,
+					FPS_TO_DURATION_US(sysfs_sensor.frame_duration))) {
+			err("failed to set frame duration : %d\n - %d",
+				sysfs_sensor.frame_duration, ret);
+			goto p_err;
+		}
+
+		dbg_sensor("exposure = %d %d\n",
+				sysfs_sensor.long_exposure_time, sysfs_sensor.short_exposure_time);
+		if (fimc_is_sensor_peri_s_exposure_time(device,
+					sysfs_sensor.long_exposure_time, sysfs_sensor.short_exposure_time)) {
+			err("failed to set exposure time : %d %d\n - %d",
+				sysfs_sensor.long_exposure_time, sysfs_sensor.short_exposure_time, ret);
+			goto p_err;
+		}
+
+		dbg_sensor("again = %d %d\n", sysfs_sensor.long_analog_gain, sysfs_sensor.short_analog_gain);
+		ret = fimc_is_sensor_peri_s_analog_gain(device,
+				sysfs_sensor.long_analog_gain * 10, sysfs_sensor.short_analog_gain * 10);
+		if (ret < 0) {
+			err("failed to set analog gain : %d %d\n - %d",
+					sysfs_sensor.long_analog_gain,
+					sysfs_sensor.short_analog_gain, ret);
+			goto p_err;
+		}
+
+		dbg_sensor("dgain = %d %d\n", sysfs_sensor.long_digital_gain, sysfs_sensor.short_digital_gain);
+		ret = fimc_is_sensor_peri_s_digital_gain(device,
+				sysfs_sensor.long_digital_gain * 10,
+				sysfs_sensor.short_digital_gain * 10);
+		if (ret < 0) {
+			err("failed to set digital gain : %d %d\n - %d",
+				sysfs_sensor.long_digital_gain,
+				sysfs_sensor.short_digital_gain, ret);
+			goto p_err;
+		}
 	}
-#endif
-#ifdef FIXED_EXPOSURE_DEBUG
-	dbg_sensor("FIXED_EXPOSURE_DEBUG = %d\n", FIXED_EXPOSURE_VALUE);
-	if (fimc_is_sensor_peri_s_exposure_time(device, FIXED_EXPOSURE_VALUE, FIXED_EXPOSURE_VALUE)) {
-		err("failed to set exposure time : %d\n - %d",
-			FIXED_EXPOSURE_VALUE, ret);
-		goto p_err;
-	}
-#endif
-#ifdef FIXED_AGAIN_DEBUG
-	dbg_sensor("FIXED_AGAIN_DEBUG = %d\n", FIXED_AGAIN_VALUE);
-	ret = fimc_is_sensor_peri_s_analog_gain(device, FIXED_AGAIN_VALUE * 10, FIXED_AGAIN_VALUE * 10);
-	if (ret < 0) {
-		err("failed to set analog gain : %d\n - %d",
-				FIXED_AGAIN_VALUE, ret);
-		goto p_err;
-	}
-#endif
-#ifdef FIXED_DGAIN_DEBUG
-	dbg_sensor("FIXED_DGAIN_DEBUG = %d\n", FIXED_DGAIN_VALUE);
-	ret = fimc_is_sensor_peri_s_digital_gain(device, FIXED_DGAIN_VALUE * 10, FIXED_DGAIN_VALUE * 10);
-	if (ret < 0) {
-		err("failed to set digital gain : %d\n - %d",
-				FIXED_DGAIN_VALUE, ret);
-		goto p_err;
-	}
-#endif
 
 p_err:
 	return ret;

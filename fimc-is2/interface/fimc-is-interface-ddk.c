@@ -11,13 +11,7 @@
 #include "fimc-is-interface-ddk.h"
 #include "fimc-is-hw-control.h"
 #include "sfr/fimc-is-sfr-isp-v310.h"
-
-static int frame_fcount(struct fimc_is_frame *frame, void *data)
-{
-	BUG_ON(!frame);
-
-	return frame->fcount - (u32)(ulong)data;
-}
+#include "fimc-is-err.h"
 
 bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 {
@@ -25,7 +19,6 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 	struct fimc_is_frame *frame;
 	struct fimc_is_frame *list_frame;
 	struct fimc_is_framemgr *framemgr;
-	u32 status = 0; /* 0:FRAME_DONE, 1:FRAME_NDONE */
 	int wq_id0, wq_id1, output_id0, output_id1;
 
 	BUG_ON(!hw_ip);
@@ -34,8 +27,12 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 
 	BUG_ON(!framemgr);
 
+
+	if (hw_ip->id == DEV_HW_TPU)
+		return 0;
+
 	framemgr_e_barrier(framemgr, 0);
-	frame = peek_frame(framemgr, FS_COMPLETE);
+	frame = peek_frame(framemgr, FS_HW_WAIT_DONE);
 	framemgr_x_barrier(framemgr, 0);
 
 	if (frame == NULL) {
@@ -48,7 +45,7 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 
 	if (fcount != frame->fcount) {
 		framemgr_e_barrier(framemgr, 0);
-		list_frame = find_frame(framemgr, FS_COMPLETE, frame_fcount,
+		list_frame = find_frame(framemgr, FS_HW_WAIT_DONE, frame_fcount,
 					(void *)(ulong)fcount);
 		framemgr_x_barrier(framemgr, 0);
 		if (list_frame == NULL) {
@@ -93,7 +90,7 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 		dbg_hw("[ID:%d][F:%d]output_id[0x%x],wq_id[0x%x]\n",
 			hw_ip->id, frame->fcount, output_id0, wq_id0);
 		fimc_is_hardware_frame_done(hw_ip, NULL, wq_id0, output_id0,
-			status, FRAME_DONE_NORMAL);
+			IS_SHOT_SUCCESS);
 		ret = true;
 	}
 
@@ -101,7 +98,7 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 		dbg_hw("[ID:%d][F:%d]output_id[0x%x],wq_id[0x%x]\n",
 			hw_ip->id, frame->fcount, output_id1, wq_id1);
 		fimc_is_hardware_frame_done(hw_ip, NULL, wq_id1, output_id1,
-			status, FRAME_DONE_NORMAL);
+			IS_SHOT_SUCCESS);
 		ret = true;
 	}
 
@@ -111,8 +108,8 @@ bool check_dma_done(struct fimc_is_hw_ip *hw_ip, u32 instance_id, u32 fcount)
 static void fimc_is_lib_io_callback(void *this, enum lib_cb_event_type event_id,
 	u32 instance_id)
 {
+	struct fimc_is_hardware *hardware;
 	struct fimc_is_hw_ip *hw_ip;
-	u32 status = 0; /* 0:FRAME_DONE, 1:FRAME_NDONE */
 	int wq_id, output_id = 0;
 	u32 hw_fcount, index;
 
@@ -122,13 +119,14 @@ static void fimc_is_lib_io_callback(void *this, enum lib_cb_event_type event_id,
 	BUG_ON(!this);
 
 	hw_ip = (struct fimc_is_hw_ip *)this;
+	hardware = hw_ip->hardware;
 	hw_fcount = atomic_read(&hw_ip->fcount);
 
 	BUG_ON(!hw_ip->hardware);
 
 	switch (event_id) {
 	case LIB_EVENT_DMA_A_OUT_DONE:
-		if (!atomic_read(&hw_ip->hardware->stream_on))
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance_id]]))
 			info_hw("[%d][ID:%d][F:%d]DMA A\n", instance_id, hw_ip->id,
 				hw_fcount);
 		index = hw_ip->debug_index[1];
@@ -160,10 +158,10 @@ static void fimc_is_lib_io_callback(void *this, enum lib_cb_event_type event_id,
 		}
 #endif
 		fimc_is_hardware_frame_done(hw_ip, NULL, wq_id, output_id,
-			status, FRAME_DONE_NORMAL);
+			IS_SHOT_SUCCESS);
 		break;
 	case LIB_EVENT_DMA_B_OUT_DONE:
-		if (!atomic_read(&hw_ip->hardware->stream_on))
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance_id]]))
 			info_hw("[%d][ID:%d][F:%d]DMA B\n", instance_id, hw_ip->id,
 				hw_fcount);
 		index = hw_ip->debug_index[1];
@@ -191,7 +189,11 @@ static void fimc_is_lib_io_callback(void *this, enum lib_cb_event_type event_id,
 		}
 
 		fimc_is_hardware_frame_done(hw_ip, NULL, wq_id, output_id,
-			status, FRAME_DONE_NORMAL);
+			IS_SHOT_SUCCESS);
+		break;
+	case LIB_EVENT_ERROR_CIN_OVERFLOW:
+		info_hw("[%d][ID:%d]LIB_EVENT_ERROR_CIN_OVERFLOW\n", instance_id, hw_ip->id);
+		fimc_is_hardware_flush_frame(hw_ip, FS_HW_CONFIGURE, IS_SHOT_OVERFLOW);
 		break;
 	default:
 		break;
@@ -203,14 +205,17 @@ static void fimc_is_lib_io_callback(void *this, enum lib_cb_event_type event_id,
 static void fimc_is_lib_camera_callback(void *this, enum lib_cb_event_type event_id,
 	u32 instance_id, void *data)
 {
+	struct fimc_is_hardware *hardware;
 	struct fimc_is_hw_ip *hw_ip;
 	ulong fcount;
 	u32 hw_fcount, index;
 	bool ret = false;
+	bool frame_done = false;
 
 	BUG_ON(!this);
 
 	hw_ip = (struct fimc_is_hw_ip *)this;
+	hardware = hw_ip->hardware;
 	hw_fcount = atomic_read(&hw_ip->fcount);
 
 	BUG_ON(!hw_ip->hardware);
@@ -219,7 +224,7 @@ static void fimc_is_lib_camera_callback(void *this, enum lib_cb_event_type event
 	case LIB_EVENT_CONFIG_LOCK:
 		fcount = (ulong)data;
 		atomic_inc(&hw_ip->count.cl);
-		if (!atomic_read(&hw_ip->hardware->stream_on))
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance_id]]))
 			info_hw("[%d][ID:%d][F:%d]C.L %d\n", instance_id, hw_ip->id,
 				hw_fcount, (u32)fcount);
 
@@ -233,7 +238,7 @@ static void fimc_is_lib_camera_callback(void *this, enum lib_cb_event_type event
 		hw_ip->debug_info[index].fcount = hw_ip->debug_index[0];
 		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_START] = raw_smp_processor_id();
 		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_START] = cpu_clock(raw_smp_processor_id());
-		if (!atomic_read(&hw_ip->hardware->stream_on))
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance_id]]))
 			info_hw("[%d][ID:%d][F:%d]F.S\n", instance_id, hw_ip->id,
 				hw_fcount);
 
@@ -244,19 +249,20 @@ static void fimc_is_lib_camera_callback(void *this, enum lib_cb_event_type event
 		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_END] = raw_smp_processor_id();
 		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_END] = cpu_clock(raw_smp_processor_id());
 		atomic_inc(&hw_ip->count.fe);
-		if (!atomic_read(&hw_ip->hardware->stream_on))
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance_id]]))
 			info_hw("[%d][ID:%d][F:%d]F.E\n", instance_id, hw_ip->id,
 				hw_fcount);
 
 		fcount = (ulong)data;
-		if (fimc_is_hw_frame_done_with_dma())
+		fimc_is_hw_g_ctrl(hw_ip, hw_ip->id, HW_G_CTRL_FRM_DONE_WITH_DMA, (void *)&frame_done);
+		if (frame_done)
 			ret = check_dma_done(hw_ip, instance_id, (u32)fcount);
 		else
 			dbg_hw("dma done interupt separate\n");
 
 		if (!ret) {
 			fimc_is_hardware_frame_done(hw_ip, NULL, -1, FIMC_IS_HW_CORE_END,
-				 0, FRAME_DONE_NORMAL);
+				IS_SHOT_SUCCESS);
 		}
 		atomic_set(&hw_ip->status.Vvalid, V_BLANK);
 		wake_up(&hw_ip->status.wait_queue);
@@ -299,6 +305,9 @@ int fimc_is_lib_isp_chain_create(struct fimc_is_hw_ip *hw_ip,
 	case DEV_HW_ISP1:
 		chain_id = 1;
 		break;
+	case DEV_HW_TPU:
+		chain_id = 0;
+		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
 		return -EINVAL;
@@ -327,11 +336,12 @@ int fimc_is_lib_isp_object_create(struct fimc_is_hw_ip *hw_ip,
 {
 	int ret = 0;
 	u32 chain_id, input_type, obj_info = 0;
-	struct fimc_is_group *parent;
+	struct fimc_is_group *head;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!this);
 	BUG_ON(!this->func);
+	BUG_ON(!hw_ip->group[instance_id]);
 
 	switch (hw_ip->id) {
 	case DEV_HW_3AA0:
@@ -346,19 +356,20 @@ int fimc_is_lib_isp_object_create(struct fimc_is_hw_ip *hw_ip,
 	case DEV_HW_ISP1:
 		chain_id = 1;
 		break;
+	case DEV_HW_TPU:
+		chain_id = 0;
+		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
 		return -EINVAL;
 		break;
 	}
 
-	parent = hw_ip->group[instance_id];
+	head = hw_ip->group[instance_id]->head;
 
-	BUG_ON(!parent);
+	BUG_ON(!head);
 
-	while (parent->parent)
-		parent = parent->parent;
-	if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &parent->state))
+	if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &head->state))
 		input_type = 0; /* default */
 	else
 		input_type = 1;
@@ -405,6 +416,9 @@ void fimc_is_lib_isp_chain_destroy(struct fimc_is_hw_ip *hw_ip,
 		break;
 	case DEV_HW_ISP1:
 		chain_id = 1;
+		break;
+	case DEV_HW_TPU:
+		chain_id = 0;
 		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
@@ -466,6 +480,11 @@ int fimc_is_lib_isp_set_param(struct fimc_is_hw_ip *hw_ip,
 		if (ret)
 			err_lib("isp set_param fail (%d)", hw_ip->id);
 		break;
+	case DEV_HW_TPU:
+		ret = CALL_LIBOP(this, set_param, this->object, param);
+		if (ret)
+			err_lib("tpu set_param fail (%d)", hw_ip->id);
+		break;
 	default:
 		ret = -EINVAL;
 		err_lib("invalid hw (%d)", hw_ip->id);
@@ -500,6 +519,12 @@ int fimc_is_lib_isp_set_ctrl(struct fimc_is_hw_ip *hw_ip,
 					frame->fcount, frame->shot);
 		if (ret)
 			err_lib("isp set_ctrl fail (%d)", hw_ip->id);
+		break;
+	case DEV_HW_TPU:
+		ret = CALL_LIBOP(this, set_ctrl, this->object, frame->instance,
+					frame->fcount, frame->shot);
+		if (ret)
+			err_lib("tpu set_ctrl fail (%d)", hw_ip->id);
 		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
@@ -536,6 +561,12 @@ void fimc_is_lib_isp_shot(struct fimc_is_hw_ip *hw_ip,
 		if (ret)
 			err_lib("isp shot fail (%d)", hw_ip->id);
 		break;
+	case DEV_HW_TPU:
+		ret = CALL_LIBOP(this, shot, this->object,
+				(struct tpu_param_set *)param_set, shot);
+		if (ret)
+			err_lib("tpu shot fail (%d)", hw_ip->id);
+		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
 		break;
@@ -569,6 +600,12 @@ int fimc_is_lib_isp_get_meta(struct fimc_is_hw_ip *hw_ip,
 					frame->fcount, frame->shot);
 		if (ret)
 			err_lib("isp get_meta fail (%d)", hw_ip->id);
+		break;
+	case DEV_HW_TPU:
+		ret = CALL_LIBOP(this, get_meta, this->object, frame->instance,
+					frame->fcount, frame->shot);
+		if (ret)
+			err_lib("tpu get_meta fail (%d)", hw_ip->id);
 		break;
 	default:
 		err_lib("invalid hw (%d)", hw_ip->id);
@@ -612,9 +649,8 @@ int fimc_is_lib_isp_create_tune_set(struct fimc_is_lib_isp *this,
 	tune_set.addr = addr;
 	tune_set.size = size;
 	tune_set.decrypt_flag = flag;
-
 	ret = CALL_LIBOP(this, create_tune_set, this->object, instance_id,
-				&tune_set);
+						&tune_set);
 	if (ret) {
 		err_lib("create_tune_set fail (%d)", ret);
 		return ret;
@@ -664,7 +700,7 @@ int fimc_is_lib_isp_delete_tune_set(struct fimc_is_lib_isp *this,
 }
 
 int fimc_is_lib_isp_load_cal_data(struct fimc_is_lib_isp *this,
-	u32 instance_id, ulong addr, u32 cal_version_index)
+	u32 instance_id, ulong addr)
 {
 	char version[32];
 	int ret = 0;
@@ -673,8 +709,8 @@ int fimc_is_lib_isp_load_cal_data(struct fimc_is_lib_isp *this,
 	BUG_ON(!this->func);
 	BUG_ON(!this->object);
 
+	memcpy(version, (void *)(addr + 0x20), (FIMC_IS_CAL_VER_SIZE - 1));
 	version[FIMC_IS_CAL_VER_SIZE] = '\0';
-	memcpy(version, (void *)(addr + cal_version_index), (FIMC_IS_CAL_VER_SIZE - 1));
 	info_lib("CAL version: %s\n", version);
 
 	ret = CALL_LIBOP(this, load_cal_data, this->object, instance_id, addr);
@@ -696,7 +732,7 @@ int fimc_is_lib_isp_get_cal_data(struct fimc_is_lib_isp *this,
 	BUG_ON(!this->object);
 
 	ret = CALL_LIBOP(this, get_cal_data, this->object, instance_id,
-				data, type);
+						data, type);
 	if (ret) {
 		err_lib("apply_tune_set fail (%d)", ret);
 		return ret;
@@ -716,7 +752,7 @@ int fimc_is_lib_isp_sensor_info_mode_chg(struct fimc_is_lib_isp *this,
 	BUG_ON(!this->object);
 
 	ret = CALL_LIBOP(this, sensor_info_mode_chg, this->object, instance_id,
-				shot);
+						shot);
 	if (ret) {
 		err_lib("sensor_info_mode_chg fail (%d)", ret);
 		return ret;
@@ -735,7 +771,7 @@ int fimc_is_lib_isp_sensor_update_control(struct fimc_is_lib_isp *this,
 	BUG_ON(!this->object);
 
 	ret = CALL_LIBOP(this, sensor_update_ctl, this->object, instance_id,
-				frame_count, shot);
+						frame_count, shot);
 	if (ret) {
 		err_lib("sensor_update_ctl fail (%d)", ret);
 		return ret;
@@ -748,6 +784,7 @@ int fimc_is_lib_isp_convert_face_map(struct fimc_is_hardware *hardware,
 	struct taa_param_set *param_set, struct fimc_is_frame *frame)
 {
 	int ret = 0;
+#ifdef ENABLE_VRA
 	int i;
 	u32 fd_width = 0, fd_height = 0;
 	u32 bayer_crop_width, bayer_crop_height;
@@ -757,6 +794,8 @@ int fimc_is_lib_isp_convert_face_map(struct fimc_is_hardware *hardware,
 	struct fimc_is_device_ischain *device = NULL;
 	struct param_otf_input *fd_otf_input;
 	struct param_dma_input *fd_dma_input;
+	bool has_vra_ch1_only = false;
+	struct fimc_is_core *core;
 
 	BUG_ON(!hardware);
 	BUG_ON(!param_set);
@@ -771,10 +810,8 @@ int fimc_is_lib_isp_convert_face_map(struct fimc_is_hardware *hardware,
 	device = group->device;
 	BUG_ON(!device);
 
-	if (shot->uctl.fdUd.faceDetectMode == FACEDETECT_MODE_OFF) {
-		if (frame->shot_ext->fd_bypass)
-			return 0;
-	}
+	if (shot->uctl.fdUd.faceDetectMode == FACEDETECT_MODE_OFF)
+		return 0;
 
 	/*
 	 * The face size which an algorithm uses is determined
@@ -798,20 +835,41 @@ int fimc_is_lib_isp_convert_face_map(struct fimc_is_hardware *hardware,
 	}
 
 	/* The face size is determined by the fd input size */
-	group_vra = &device->group_vra;
-	if (test_bit(FIMC_IS_GROUP_INIT, &group_vra->state)
-		&& (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &group_vra->state))) {
-
-		fd_dma_input = fimc_is_itf_g_param(device, frame, PARAM_FD_DMA_INPUT);
-		if (fd_dma_input->cmd == DMA_INPUT_COMMAND_ENABLE) {
-			fd_width = fd_dma_input->width;
-			fd_height = fd_dma_input->height;
+	ret = fimc_is_hw_g_ctrl(NULL, 0, HW_G_CTRL_HAS_VRA_CH1_ONLY, (void *)&has_vra_ch1_only);
+	if (has_vra_ch1_only) {
+		/*  for Java : vra is another instance */
+		core = (struct fimc_is_core *)platform_get_drvdata(device->pdev);
+		if (IS_ERR_OR_NULL(core)) {
+			err("core_get fail : invalid fd input size\n");
+			return 0;
+		}
+		for (i = 0; i < FIMC_IS_STREAM_COUNT; i++) {
+			group_vra = &core->ischain[i].group_vra;
+			if (test_bit(FIMC_IS_GROUP_OPEN, &group_vra->state)) {
+				device = &core->ischain[i];
+				fd_dma_input = fimc_is_itf_g_param(device, frame, PARAM_FD_DMA_INPUT);
+				if (fd_dma_input->cmd == DMA_INPUT_COMMAND_ENABLE) {
+					fd_width = fd_dma_input->width;
+					fd_height = fd_dma_input->height;
+				}
+				break;
+			}
 		}
 	} else {
-		fd_otf_input = fimc_is_itf_g_param(device, frame, PARAM_FD_OTF_INPUT);
-		if (fd_otf_input->cmd == OTF_INPUT_COMMAND_ENABLE) {
-			fd_width = fd_otf_input->width;
-			fd_height = fd_otf_input->height;
+		group_vra = &device->group_vra;
+		if (test_bit(FIMC_IS_GROUP_INIT, &group_vra->state)
+			&& (!test_bit(FIMC_IS_GROUP_OTF_INPUT, &group_vra->state))) {
+			fd_dma_input = fimc_is_itf_g_param(device, frame, PARAM_FD_DMA_INPUT);
+			if (fd_dma_input->cmd == DMA_INPUT_COMMAND_ENABLE) {
+				fd_width = fd_dma_input->width;
+				fd_height = fd_dma_input->height;
+			}
+		} else {
+			fd_otf_input = fimc_is_itf_g_param(device, frame, PARAM_FD_OTF_INPUT);
+			if (fd_otf_input->cmd == OTF_INPUT_COMMAND_ENABLE) {
+				fd_width = fd_otf_input->width;
+				fd_height = fd_otf_input->height;
+			}
 		}
 	}
 
@@ -847,6 +905,7 @@ int fimc_is_lib_isp_convert_face_map(struct fimc_is_hardware *hardware,
 			shot->uctl.fdUd.faceRectangles[i][3]);
 	}
 
+#endif
 	return ret;
 }
 

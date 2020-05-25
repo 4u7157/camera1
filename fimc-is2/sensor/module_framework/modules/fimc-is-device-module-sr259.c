@@ -79,20 +79,19 @@ static const struct v4l2_subdev_ops subdev_ops = {
 static int sensor_module_sr259_power_setpin(struct platform_device *pdev,
 	struct exynos_platform_fimc_is_module *pdata)
 {
+
 	struct device *dev;
 	struct device_node *dnode;
 	int gpio_reset = 0;
-	int gpio_none = 0;
 	int gpio_stby = 0;
-	int gpio_vt_cam_1p8_en = 0;
-	int gpio_vt_cam_2p8_en = 0;
+	int gpio_none = 0;
 
 	BUG_ON(!pdev);
-
+	
 	dev = &pdev->dev;
 	dnode = dev->of_node;
 
-	dev_info(dev, "%s E\n", __func__);
+	dev_info(dev, "%s E v4\n", __func__);
 
 	gpio_reset = of_get_named_gpio(dnode, "gpio_reset", 0);
 	if (!gpio_is_valid(gpio_reset)) {
@@ -110,58 +109,45 @@ static int sensor_module_sr259_power_setpin(struct platform_device *pdev,
 		gpio_free(gpio_stby);
 	}
 
-	gpio_vt_cam_1p8_en = of_get_named_gpio(dnode, "gpio_vt_cam_1p8_en", 0);
-	if (!gpio_is_valid(gpio_vt_cam_1p8_en)) {
-		dev_err(dev, "failed to get gpio_vt_cam_1p8_en\n");
-	} else {
-		gpio_request_one(gpio_vt_cam_1p8_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_vt_cam_1p8_en);
-	}
-
-	gpio_vt_cam_2p8_en = of_get_named_gpio(dnode, "gpio_vt_cam_2p8_en", 0);
-	if (!gpio_is_valid(gpio_vt_cam_2p8_en)) {
-		dev_err(dev, "failed to get gpio_vt_cam_2p8_en\n");
-	} else {
-		gpio_request_one(gpio_vt_cam_2p8_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_vt_cam_2p8_en);
-	}
 
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON);
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF);
 
-	/* FRONT CAMERA - POWER ON */
-	if (gpio_is_valid(gpio_vt_cam_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_vt_cam_1p8_en, NULL, PIN_OUTPUT, 1, 10);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 1, 10);
-	}
-	if (gpio_is_valid(gpio_vt_cam_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_vt_cam_2p8_en, NULL, PIN_OUTPUT, 1, 10000);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD_VTCAM_A2P8", PIN_REGULATOR, 1, 10000);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 1, 10000);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_stby, NULL, PIN_OUTPUT, 1, 30000);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, NULL, PIN_OUTPUT, 1, 5);
+	SET_PIN_INIT(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON);
+	SET_PIN_INIT(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF);
 
-	/* FRONT CAMERA - POWER OFF */
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, NULL, PIN_OUTPUT, 0, 20);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 5);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_stby, NULL, PIN_OUTPUT, 0, 5);
-	if (gpio_is_valid(gpio_vt_cam_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_vt_cam_2p8_en, NULL, PIN_OUTPUT, 0, 5);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD_VTCAM_A2P8", PIN_REGULATOR, 0, 5);
-	}
-	if (gpio_is_valid(gpio_vt_cam_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_vt_cam_1p8_en, NULL, PIN_OUTPUT, 0, 5);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 0, 5);
-	}
+	/* Normal On */
 
-	dev_info(dev, "%s X\n", __func__);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_stby, "sen_stby high", PIN_OUTPUT, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 1, 10);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 1, 10000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 2, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "delay", PIN_NONE, 0, 1500);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_stby, "sen_stby high", PIN_OUTPUT, 1, 33000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst high", PIN_OUTPUT, 1, 1000);
 
+	/* Normal Off */
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 3);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "delay", PIN_NONE, 0, 1500);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_stby, "sen_stby low", PIN_OUTPUT, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 0, 0);
+	
+	/* READ_ROM - POWER ON */
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 1, 9000);
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 1, 2000);
+
+	/* READ_ROM - POWER OFF */
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 0,1000);
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 0, 0);
+
+	dev_info(dev, "%s X v4\n", __func__);
 	return 0;
+
 }
 
 int sensor_module_sr259_probe(struct platform_device *pdev)

@@ -56,6 +56,10 @@ enum is_param {
 	PARAM_ISP_OTF_OUTPUT,
 	PARAM_ISP_VDMA4_OUTPUT,
 	PARAM_ISP_VDMA5_OUTPUT,
+	PARAM_DRC_CONTROL,
+	PARAM_DRC_OTF_INPUT,
+	PARAM_DRC_DMA_INPUT,
+	PARAM_DRC_OTF_OUTPUT,
 	PARAM_TPU_CONTROL,
 	PARAM_TPU_CONFIG,
 	PARAM_TPU_OTF_INPUT,
@@ -1155,6 +1159,7 @@ struct is_param_region {
 #endif
 	struct taa_param		taa;
 	struct isp_param		isp;
+	struct drc_param		drc;
 	struct tpu_param		tpu;
 	struct mcs_param		mcs;
 	struct vra_param		vra;

@@ -19,7 +19,7 @@
 #include "fimc-is-type.h"
 
 static int fimc_is_ischain_isp_cfg(struct fimc_is_subdev *leader,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *frame,
 	struct fimc_is_crop *incrop,
 	struct fimc_is_crop *otcrop,
@@ -37,9 +37,12 @@ static int fimc_is_ischain_isp_cfg(struct fimc_is_subdev *leader,
 	struct fimc_is_crop *scc_incrop;
 	struct fimc_is_crop *scp_incrop;
 	struct fimc_is_module_enum *module;
+	struct fimc_is_device_ischain *device;
 	u32 hw_format = DMA_INPUT_FORMAT_BAYER;
 	u32 hw_bitwidth = DMA_INPUT_BIT_WIDTH_16BIT;
 	u32 width, height;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!leader);
 	BUG_ON(!device);
@@ -177,7 +180,7 @@ p_err:
 }
 
 static int fimc_is_ischain_isp_tag(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *frame,
 	struct camera2_node *node)
 {
@@ -187,7 +190,10 @@ static int fimc_is_ischain_isp_tag(struct fimc_is_subdev *subdev,
 	struct fimc_is_crop inparm;
 	struct fimc_is_crop *incrop, *otcrop;
 	struct fimc_is_subdev *leader;
+	struct fimc_is_device_ischain *device;
 	u32 lindex, hindex, indexes;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!subdev);
 	BUG_ON(!device);

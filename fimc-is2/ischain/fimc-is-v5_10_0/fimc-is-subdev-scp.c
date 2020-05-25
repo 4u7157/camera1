@@ -62,7 +62,7 @@ static int fimc_is_ischain_scp_adjust_crop(struct fimc_is_device_ischain *device
 }
 
 static int fimc_is_ischain_scp_cfg(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *frame,
 	struct fimc_is_crop *incrop,
 	struct fimc_is_crop *otcrop,
@@ -76,7 +76,10 @@ static int fimc_is_ischain_scp_cfg(struct fimc_is_subdev *subdev,
 	struct param_otf_input *otf_input;
 	struct param_otf_output *otf_output;
 	struct param_dma_output *dma_output;
+	struct fimc_is_device_ischain *device;
 	u32 scp_width, scp_height;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	scp_width = subdev->output.crop.w;
 	scp_height = subdev->output.crop.h;
@@ -277,7 +280,7 @@ static int fimc_is_ischain_scp_stop(struct fimc_is_device_ischain *device,
 }
 
 static int fimc_is_ischain_scp_tag(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *ldr_frame,
 	struct camera2_node *node)
 {
@@ -287,8 +290,11 @@ static int fimc_is_ischain_scp_tag(struct fimc_is_subdev *subdev,
 	struct camera2_scaler_uctl *scalerUd;
 	struct scp_param *scp_param;
 	struct fimc_is_crop *incrop, *otcrop, inparm, otparm;
+	struct fimc_is_device_ischain *device;
 	u32 lindex, hindex, indexes;
 	u32 pixelformat = 0;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!device);
 	BUG_ON(!subdev);

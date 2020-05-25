@@ -19,7 +19,8 @@
 
 enum fimc_is_device_type {
 	FIMC_IS_DEVICE_SENSOR,
-	FIMC_IS_DEVICE_ISCHAIN
+	FIMC_IS_DEVICE_ISCHAIN,
+	FIMC_IS_DEVICE_MAX
 };
 
 struct fimc_is_window {

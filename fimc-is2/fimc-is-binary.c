@@ -41,13 +41,28 @@ static int read_file_contents(struct file *fp, struct fimc_is_binary *bin)
 	if (size <= 0)
 		return -EBADF;
 
-	buf = bin->alloc(size);
-	if (!buf)
-		return -ENOMEM;
+	/* if a buffer for binary is already allocated */
+	if (bin->data) {
+		if (!bin->size)
+			return -EINVAL;
+
+		buf = bin->data;
+
+		/* shrink read size to fit the size of a given buffer */
+		if (size > bin->size) {
+			WARN_ON(1);
+			size = bin->size;
+		}
+	} else {
+		buf = bin->alloc(size);
+		if (!buf)
+			return -ENOMEM;
+	}
 
 	ret = kernel_read(fp, 0, buf, size);
 	if (ret != size) {
-		bin->free(buf);
+		if (!bin->data)
+			bin->free(buf);
 		return ret;
 	}
 
@@ -57,7 +72,33 @@ static int read_file_contents(struct file *fp, struct fimc_is_binary *bin)
 	return 0;
 }
 
-static int get_filesystem_binary(const char *filename, struct fimc_is_binary *bin)
+static int write_file_contents(struct file *fp, struct fimc_is_binary *bin)
+{
+	ssize_t ret;
+	ssize_t count;
+	loff_t pos = 0;
+	char *buf = (char *)bin->data;
+
+	do {
+		count = min_t(ssize_t, PAGE_SIZE, bin->size - pos);
+		ret = kernel_write(fp, buf, count, pos);
+		if (ret > 0) {
+			pos += ret;
+			buf += ret;
+		} else {
+			break;
+		}
+	} while (pos < bin->size);
+
+	return 0;
+}
+
+/**
+  * get_filesystem_binary: copy a binary in userland to a given buffer
+  * @filename: filenam of binary file including full path
+  * @bin: pointer to fimc_is_binary structure
+  **/
+int get_filesystem_binary(const char *filename, struct fimc_is_binary *bin)
 {
 	struct file *fp;
 	int ret = 0;
@@ -65,6 +106,27 @@ static int get_filesystem_binary(const char *filename, struct fimc_is_binary *bi
 	fp = filp_open(filename, O_RDONLY, 0);
 	if (!IS_ERR_OR_NULL(fp)) {
 		ret = read_file_contents(fp, bin);
+		fput(fp);
+	} else {
+		ret = PTR_ERR(fp);
+	}
+
+	return ret;
+}
+
+/**
+  * put_filesystem_binary: copy a given buffer to a file in userland
+  * @filename: filenam of binary file including full path
+  * @bin: pointer to fimc_is_binary structure
+  **/
+int put_filesystem_binary(const char *filename, struct fimc_is_binary *bin, u32 flags)
+{
+	struct file *fp;
+	int ret = 0;
+
+	fp = filp_open(filename, flags, 0666);
+	if (!IS_ERR_OR_NULL(fp)) {
+		ret = write_file_contents(fp, bin);
 		fput(fp);
 	} else {
 		ret = PTR_ERR(fp);
@@ -147,7 +209,7 @@ int request_binary(struct fimc_is_binary *bin, const char *path,
 	do {
 		ret = request_firmware(&bin->fw, name, device);
 
-		if (!ret) {
+		if (!ret && bin->fw) {
 			bin->data = (void *)bin->fw->data;
 			bin->size = bin->fw->size;
 

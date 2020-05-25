@@ -13,6 +13,8 @@
 
 #include <linux/workqueue.h>
 #include <linux/bug.h>
+#include <linux/videodev2.h>
+#include <linux/videodev2_exynos_camera.h>
 
 #include "fimc-is-core.h"
 #include "fimc-is-regs.h"
@@ -630,7 +632,7 @@ static inline void fimc_is_sync_reprocessing_queue(struct fimc_is_groupmgr *grou
 		return;
 	}
 
-	rframemgr = GET_FRAMEMGR(rgroup->leader.vctx);
+	rframemgr = GET_HEAD_GROUP_FRAMEMGR(rgroup);
 
 	framemgr_e_barrier_irqs(rframemgr, 0, flags);
 	rframe = peek_frame(rframemgr, FS_REQUEST);
@@ -1299,7 +1301,16 @@ static void wq_func_subdev(struct fimc_is_subdev *leader,
 	BUG_ON(!sub_frame);
 
 	ldr_vctx = leader->vctx;
+	if (unlikely(!ldr_vctx)) {
+		mserr("ldr_vctx is NULL", subdev, subdev);
+		return;
+	}
+
 	sub_vctx = subdev->vctx;
+	if (unlikely(!sub_vctx)) {
+		mserr("ldr_vctx is NULL", subdev, subdev);
+		return;
+	}
 
 	ldr_framemgr = GET_FRAMEMGR(ldr_vctx);
 	sub_framemgr = GET_FRAMEMGR(sub_vctx);
@@ -1356,15 +1367,17 @@ static void wq_func_subdev(struct fimc_is_subdev *leader,
 
 	clear_bit(subdev->id, &ldr_frame->out_flag);
 
-complete:
-	sub_frame->stream->fcount = fcount;
-	sub_frame->stream->rcount = rcount;
-
-	trans_frame(sub_framemgr, sub_frame, FS_COMPLETE);
-
 	/* for debug */
 	DBG_DIGIT_TAG((ldr_frame->group) ? ((struct fimc_is_group *)ldr_frame->group)->slot : 0,
 			0, GET_QUEUE(sub_vctx), sub_frame, fcount);
+
+complete:
+	sub_frame->stream->fcount = fcount;
+	sub_frame->stream->rcount = rcount;
+	sub_frame->fcount = fcount;
+	sub_frame->rcount = rcount;
+
+	trans_frame(sub_framemgr, sub_frame, FS_COMPLETE);
 
 	CALL_VOPS(sub_vctx, done, sub_frame->index, done_state);
 }
@@ -2323,7 +2336,8 @@ static void wq_func_group_xxx(struct fimc_is_groupmgr *groupmgr,
 
 #ifdef ENABLE_SYNC_REPROCESSING
 	/* Sync Reprocessing */
-	if (atomic_read(&groupmgr->gtask[group->id].refcount) > 1)
+	if ((atomic_read(&groupmgr->gtask[group->id].refcount) > 1)
+		&& (group->device->resourcemgr->hal_version == IS_HAL_VER_1_0))
 		fimc_is_sync_reprocessing_queue(groupmgr, group);
 #endif
 
@@ -2631,33 +2645,49 @@ static void interface_timer(unsigned long data)
 			spin_unlock_irqrestore(&itf->shot_check_lock, flags);
 
 			if (test_bit(FIMC_IS_GROUP_START, &device->group_3aa.state)) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_3aa.leader);
-				framemgr_e_barrier_irqs(framemgr, FMGR_IDX_6, flags);
-				scount_3ax = framemgr->queued_count[FS_PROCESS];
-				shot_count += scount_3ax;
-				framemgr_x_barrier_irqr(framemgr, FMGR_IDX_6, flags);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_3aa);
+				if (framemgr) {
+					framemgr_e_barrier_irqs(framemgr, FMGR_IDX_6, flags);
+					scount_3ax = framemgr->queued_count[FS_PROCESS];
+					shot_count += scount_3ax;
+					framemgr_x_barrier_irqr(framemgr, FMGR_IDX_6, flags);
+				} else {
+					minfo("\n### 3aa framemgr is null ###\n", device);
+				}
 			}
 
 			if (test_bit(FIMC_IS_GROUP_START, &device->group_isp.state)) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_isp.leader);
-				framemgr_e_barrier_irqs(framemgr, FMGR_IDX_7, flags);
-				scount_isp = framemgr->queued_count[FS_PROCESS];
-				shot_count += scount_isp;
-				framemgr_x_barrier_irqr(framemgr, FMGR_IDX_7, flags);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_isp);
+				if (framemgr) {
+					framemgr_e_barrier_irqs(framemgr, FMGR_IDX_7, flags);
+					scount_isp = framemgr->queued_count[FS_PROCESS];
+					shot_count += scount_isp;
+					framemgr_x_barrier_irqr(framemgr, FMGR_IDX_7, flags);
+				} else {
+					minfo("\n### isp framemgr is null ###\n", device);
+				}
 			}
 
 			if (test_bit(FIMC_IS_GROUP_START, &device->group_dis.state)) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_dis.leader);
-				framemgr_e_barrier_irqs(framemgr, FMGR_IDX_8, flags);
-				shot_count += framemgr->queued_count[FS_PROCESS];
-				framemgr_x_barrier_irqr(framemgr, FMGR_IDX_8, flags);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_dis);
+				if (framemgr) {
+					framemgr_e_barrier_irqs(framemgr, FMGR_IDX_8, flags);
+					shot_count += framemgr->queued_count[FS_PROCESS];
+					framemgr_x_barrier_irqr(framemgr, FMGR_IDX_8, flags);
+				} else {
+					minfo("\n### dis framemgr is null ###\n", device);
+				}
 			}
 
 			if (test_bit(FIMC_IS_GROUP_START, &device->group_vra.state)) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_vra.leader);
-				framemgr_e_barrier_irqs(framemgr, FMGR_IDX_31, flags);
-				shot_count += framemgr->queued_count[FS_PROCESS];
-				framemgr_x_barrier_irqr(framemgr, FMGR_IDX_31, flags);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_vra);
+				if (framemgr) {
+					framemgr_e_barrier_irqs(framemgr, FMGR_IDX_31, flags);
+					shot_count += framemgr->queued_count[FS_PROCESS];
+					framemgr_x_barrier_irqr(framemgr, FMGR_IDX_31, flags);
+				} else {
+					minfo("\n### vra framemgr is null ###\n", device);
+				}
 			}
 		}
 
@@ -2674,7 +2704,7 @@ static void interface_timer(unsigned long data)
 
 			minfo("\n### 3ax framemgr info ###\n", device);
 			if (scount_3ax) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_3aa.leader);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_3aa);
 				if (framemgr) {
 					framemgr_e_barrier_irqs(framemgr, 0, flags);
 					frame_manager_print_queues(framemgr);
@@ -2686,7 +2716,7 @@ static void interface_timer(unsigned long data)
 
 			minfo("\n### isp framemgr info ###\n", device);
 			if (scount_isp) {
-				framemgr = GET_SUBDEV_FRAMEMGR(&device->group_isp.leader);
+				framemgr = GET_HEAD_GROUP_FRAMEMGR(&device->group_isp);
 				if (framemgr) {
 					framemgr_e_barrier_irqs(framemgr, 0, flags);
 					frame_manager_print_queues(framemgr);
@@ -3255,13 +3285,13 @@ int fimc_is_hw_logdump(struct fimc_is_interface *this)
 	read_cnt = 0;
 
 	CALL_BUFOP(minfo->pb_fw, sync_for_cpu,
-			minfo->pb_fw, DEBUG_REGION_OFFSET, DEBUG_REGION_SIZE, DMA_FROM_DEVICE);
+			minfo->pb_fw, DEBUG_REGION_OFFSET, DEBUG_REGION_SIZE + 4, DMA_FROM_DEVICE);
 
 	write_vptr = *((int *)(minfo->kvaddr + DEBUGCTL_OFFSET)) - DEBUG_REGION_OFFSET;
 	read_vptr = fimc_is_debug.read_vptr;
 
-	if (write_vptr < 0 || write_vptr > DEBUG_REGION_SIZE)
-		write_vptr = (read_vptr + DEBUG_REGION_SIZE) % (DEBUG_REGION_SIZE + 1);
+	if (write_vptr < 0 || write_vptr > FIMC_IS_DEBUG_SIZE)
+		write_vptr = (read_vptr + FIMC_IS_DEBUG_SIZE) % (FIMC_IS_DEBUG_SIZE + 1);
 
 	if (write_vptr >= read_vptr) {
 		read_cnt1 = write_vptr - read_vptr;

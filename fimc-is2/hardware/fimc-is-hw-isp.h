@@ -39,11 +39,11 @@ void fimc_is_hw_isp_update_param(struct fimc_is_hw_ip *hw_ip, struct is_region *
 int fimc_is_hw_isp_get_meta(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame,
 	ulong hw_map);
 int fimc_is_hw_isp_frame_ndone(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame,
-	u32 instance, bool late_flag);
+	u32 instance, enum ShotErrorType done_type);
 int fimc_is_hw_isp_reset(struct fimc_is_hw_ip *hw_ip);
-int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, u32 index,
 	u32 instance, ulong hw_map);
-int fimc_is_hw_isp_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_isp_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenario,
 	u32 instance, ulong hw_map);
 int fimc_is_hw_isp_delete_setfile(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	ulong hw_map);

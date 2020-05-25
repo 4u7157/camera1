@@ -30,6 +30,7 @@
 
 #include "../../interface/fimc-is-interface-ischain.h"
 #include "../../hardware/fimc-is-hw-control.h"
+#include "../../hardware/fimc-is-hw-mcscaler-v2.h"
 
 /* for access sysreg_isp register */
 #define SYSREG_ISP_USER_CON	0x144F1000
@@ -39,6 +40,10 @@
 const struct fimc_is_subdev_ops fimc_is_subdev_dis_ops;
 const struct fimc_is_subdev_ops fimc_is_subdev_scc_ops;
 const struct fimc_is_subdev_ops fimc_is_subdev_scp_ops;
+
+struct fimc_is_clk_gate clk_gate_3aa;
+struct fimc_is_clk_gate clk_gate_isp;
+struct fimc_is_clk_gate clk_gate_vra;
 
 void fimc_is_enter_lib_isr(void)
 {
@@ -136,6 +141,10 @@ int fimc_is_hw_group_cfg(void *group_data)
 		group->subdev[ENTRY_M3P] = NULL;
 		group->subdev[ENTRY_M4P] = NULL;
 		group->subdev[ENTRY_VRA] = &device->group_vra.leader;
+
+		device->m0p.param_dma_ot = PARAM_MCS_OUTPUT0;
+		device->m1p.param_dma_ot = PARAM_MCS_OUTPUT1;
+		device->m2p.param_dma_ot = PARAM_MCS_OUTPUT2;
 		break;
 	case GROUP_SLOT_VRA:
 		group->subdev[ENTRY_3AA] = NULL;
@@ -212,7 +221,9 @@ int fimc_is_hw_camif_cfg(void *sensor_data)
 	struct fimc_is_device_ischain *ischain;
 	bool is_otf = false;
 	void __iomem *isp_mipiphy_con;
+#ifndef CONFIG_PSV_ASB
 	u32 val;
+#endif
 
 	BUG_ON(!sensor_data);
 
@@ -231,6 +242,7 @@ int fimc_is_hw_camif_cfg(void *sensor_data)
 		clear_bit(FLITE_DUMMY, &flite->state);
 		break;
 	case 1:
+#ifndef CONFIG_PSV_ASB
 		if (is_otf)
 			clear_bit(FLITE_DUMMY, &flite->state);
 		else
@@ -240,6 +252,7 @@ int fimc_is_hw_camif_cfg(void *sensor_data)
 		val = readl(isp_mipiphy_con);
 		val |= (1 << 3);
 		writel(val, isp_mipiphy_con);
+#endif
 		break;
 	default:
 		merr("sensor id is invalid(%d)", sensor, sensor->instance);
@@ -295,8 +308,8 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 
 	val = readl(isp_user_con);
 	/* RT setting */
-	val |= (1 << 0)| /* VRA set to RT */
-		(1 << 1); /* ISP & Scaler set to RT */
+	val &= ~((1 << 0)| /* VRA set to NRT */
+		(1 << 1)); /* ISP & Scaler set to NRT */
 
 	/* BNS Input Select
 	 * CSIS0 : 0 (BACK)
@@ -499,6 +512,80 @@ int fimc_is_get_hw_list(int group_id, int *hw_list)
 	return hw_index;
 }
 
+static int fimc_is_hw_get_clk_gate(struct fimc_is_hw_ip *hw_ip, int hw_id)
+{
+	int ret = 0;
+	struct fimc_is_clk_gate *clk_gate = NULL;
+
+	switch (hw_id) {
+	case DEV_HW_3AA0:
+		clk_gate = &clk_gate_3aa;
+		clk_gate->regs = ioremap_nocache(0x144D081C, 0x4);
+		if (!clk_gate->regs) {
+			probe_err("Failed to remap clk_gate regs\n");
+			ret = -ENOMEM;
+			goto p_err;
+		}
+		hw_ip->clk_gate_idx = 0;
+		clk_gate->bit[hw_ip->clk_gate_idx] = 0;
+		clk_gate->refcnt[hw_ip->clk_gate_idx] = 0;
+
+		spin_lock_init(&clk_gate->slock);
+		break;
+	case DEV_HW_ISP0:
+		clk_gate = &clk_gate_isp;
+		clk_gate->regs = ioremap_nocache(0x144D0824, 0x4);
+		if (!clk_gate->regs) {
+			probe_err("Failed to remap clk_gate regs\n");
+			ret = -ENOMEM;
+			goto p_err;
+		}
+		hw_ip->clk_gate_idx = 0;
+		clk_gate->bit[hw_ip->clk_gate_idx] = 0;
+		clk_gate->refcnt[hw_ip->clk_gate_idx] = 0;
+
+		spin_lock_init(&clk_gate->slock);
+		break;
+	case DEV_HW_MCSC0:
+		clk_gate = &clk_gate_isp;
+		clk_gate->regs = ioremap_nocache(0x144D0824, 0x4);
+		if (!clk_gate->regs) {
+			probe_err("Failed to remap clk_gate regs\n");
+			ret = -ENOMEM;
+			goto p_err;
+		}
+		hw_ip->clk_gate_idx = 0;
+		clk_gate->bit[hw_ip->clk_gate_idx] = 0;
+		clk_gate->refcnt[hw_ip->clk_gate_idx] = 0;
+
+		spin_lock_init(&clk_gate->slock);
+		break;
+	case DEV_HW_VRA:
+		clk_gate = &clk_gate_vra;
+		clk_gate->regs = ioremap_nocache(0x144D0810, 0x4);
+		if (!clk_gate->regs) {
+			probe_err("Failed to remap clk_gate regs\n");
+			ret = -ENOMEM;
+			goto p_err;
+		}
+		hw_ip->clk_gate_idx = 0;
+		clk_gate->bit[hw_ip->clk_gate_idx] = 0;
+		clk_gate->refcnt[hw_ip->clk_gate_idx] = 0;
+
+		spin_lock_init(&clk_gate->slock);
+		break;
+	default:
+		probe_err("hw_id(%d) is invalid", hw_id);
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	hw_ip->clk_gate = clk_gate;
+
+p_err:
+	return ret;
+}
+
 int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 {
 	int ret = 0;
@@ -520,6 +607,8 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 			return -EINVAL;
 		}
 
+		itf_hwip->hw_ip->regs_start = mem_res->start;
+		itf_hwip->hw_ip->regs_end = mem_res->end;
 		itf_hwip->hw_ip->regs = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
@@ -536,6 +625,8 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 			return -EINVAL;
 		}
 
+		itf_hwip->hw_ip->regs_start = mem_res->start;
+		itf_hwip->hw_ip->regs_end = mem_res->end;
 		itf_hwip->hw_ip->regs = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
@@ -552,6 +643,8 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 			return -EINVAL;
 		}
 
+		itf_hwip->hw_ip->regs_start = mem_res->start;
+		itf_hwip->hw_ip->regs_end = mem_res->end;
 		itf_hwip->hw_ip->regs = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
@@ -567,6 +660,8 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 			return -EINVAL;
 		}
 
+		itf_hwip->hw_ip->regs_start = mem_res->start;
+		itf_hwip->hw_ip->regs_end = mem_res->end;
 		itf_hwip->hw_ip->regs = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
@@ -581,6 +676,8 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 			return -EINVAL;
 		}
 
+		itf_hwip->hw_ip->regs_b_start = mem_res->start;
+		itf_hwip->hw_ip->regs_b_end = mem_res->end;
 		itf_hwip->hw_ip->regs_b = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs_b) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
@@ -594,6 +691,10 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 		return -EINVAL;
 		break;
 	}
+
+	ret = fimc_is_hw_get_clk_gate(itf_hwip->hw_ip, hw_id);;
+	if (ret)
+		dev_err(&pdev->dev, "fimc_is_hw_get_clk_gate is fail\n");
 
 	return ret;
 }
@@ -779,23 +880,69 @@ int fimc_is_hw_request_irq(void *itfc_data, int hw_id)
 	return ret;
 }
 
-int fimc_is_hw_set_fullbypass(void *itfc_data, int hw_id, bool bypass)
+int fimc_is_hw_s_ctrl(void *itfc_data, int hw_id, enum hw_s_ctrl_id id, void *val)
 {
-	return 0;
+	int ret = 0;
+
+	switch (id) {
+	case HW_S_CTRL_FULL_BYPASS:
+		/* nothing */
+		break;
+	case HW_S_CTRL_CHAIN_IRQ:
+		/* nothing */
+		break;
+	default:
+		break;
+	}
+
+	return ret;
 }
 
-int fimc_is_hw_set_chain_interrupt(void *itfc_data)
+int fimc_is_hw_g_ctrl(void *itfc_data, int hw_id, enum hw_g_ctrl_id id, void *val)
 {
-	return 0;
+	int ret = 0;
+
+	switch (id) {
+	case HW_G_CTRL_FRM_DONE_WITH_DMA:
+		*(bool *)val = true;
+		break;
+	case HW_G_CTRL_HAS_MCSC:
+		*(bool *)val = true;
+		break;
+	case HW_G_CTRL_HAS_VRA_CH1_ONLY:
+		*(bool *)val = false;
+		break;
+	}
+
+	return ret;
 }
 
-bool fimc_is_has_mcsc(void)
+int fimc_is_hw_query_cap(void *cap_data, int hw_id)
 {
-	return true;
-}
+	int ret = 0;
 
-bool fimc_is_hw_frame_done_with_dma(void)
-{
-	return true; /* true after FIMC-IS V4.x */
-}
+	BUG_ON(!cap_data);
 
+	switch (hw_id) {
+	case DEV_HW_MCSC0:
+		{
+			struct fimc_is_hw_mcsc_cap *cap = (struct fimc_is_hw_mcsc_cap *)cap_data;
+			/* v2.10 */
+			cap->hw_ver = HW_SET_VERSION(2, 10, 0, 0);
+			cap->max_output = 3;
+			cap->in_otf = MCSC_CAP_SUPPORT;
+			cap->in_dma = MCSC_CAP_SUPPORT;
+			cap->out_dma[0] = MCSC_CAP_SUPPORT;
+			cap->out_dma[1] = MCSC_CAP_SUPPORT;
+			cap->out_dma[2] = MCSC_CAP_SUPPORT;
+			cap->out_otf[0] = MCSC_CAP_SUPPORT;
+			cap->out_otf[1] = MCSC_CAP_SUPPORT;
+			cap->out_otf[2] = MCSC_CAP_SUPPORT;
+		}
+		break;
+	default:
+		break;
+	}
+
+	return ret;
+}

@@ -31,6 +31,9 @@
 #define LIB_VRA_OFFSET		(0x00000400)
 #define LIB_VRA_CODE_SIZE	(0x00040000)
 
+#define LIB_RTA_OFFSET		(0x00000000)
+#define LIB_RTA_CODE_SIZE	(0x00100000)
+
 #define FIMC_IS_MAX_TASK_WORKER	(5)
 #define FIMC_IS_MAX_TASK	(20)
 
@@ -68,6 +71,7 @@
 typedef u32 (*task_func)(void *params);
 
 typedef u32 (*start_up_func_t)(void **func);
+typedef u32 (*rta_start_up_func_t)(void *bootargs, void **func);
 typedef void(*os_system_func_t)(void);
 
 struct fimc_is_task_work {
@@ -99,9 +103,13 @@ struct fimc_is_lib_task {
 #define MT_STATUS_FREE 	0x2
 
 #define MEM_TRACK_COUNT	64
+#define MEM_TRACK_ADDRS_COUNT 16
 
 struct _lib_mem_track {
 	ulong			lr;
+#ifdef CONFIG_STACKTRACE
+	ulong			addrs[MEM_TRACK_ADDRS_COUNT];
+#endif
 	int			cpu;
 	int			pid;
 	unsigned long long	when;
@@ -139,6 +147,7 @@ struct fimc_is_lib_support {
 	struct fimc_is_lib_task			task_taaisp[FIMC_IS_MAX_TASK_WORKER];
 
 	/* memory management */
+	spinlock_t				slock;
 	struct list_head			lib_mem_list;
 	struct list_head			taaisp_mem_list;
 	struct list_head			vra_mem_list;

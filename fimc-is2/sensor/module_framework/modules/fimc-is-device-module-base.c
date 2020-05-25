@@ -38,21 +38,6 @@
 #include "fimc-is-device-module-base.h"
 #include "interface/fimc-is-interface-library.h"
 
-int sensor_module_load_bin(void)
-{
-	int ret = 0;
-
-	ret = fimc_is_load_bin();
-	if (ret < 0) {
-		err("fimc_is_load_bin is fail(%d)", ret);
-		goto p_err;
-	}
-	info("fimc_is_load_bin done\n");
-
-p_err:
-	return ret;
-}
-
 int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 {
 	int ret = 0;
@@ -62,6 +47,11 @@ int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 	struct v4l2_subdev *subdev_cis = NULL;
 	struct v4l2_subdev *subdev_actuator = NULL;
 	struct v4l2_subdev *subdev_flash = NULL;
+	struct v4l2_subdev *subdev_ois = NULL;
+	struct v4l2_subdev *subdev_preprocessor = NULL;
+	struct fimc_is_preprocessor *preprocessor = NULL;
+	register_sensor_interface register_sensor_itf =
+		(register_sensor_interface)SENSOR_REGISTER_FUNC_ADDR;
 
 	BUG_ON(!subdev);
 
@@ -75,18 +65,32 @@ int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 	memset(&sensor_peri->actuator.pre_position, 0, sizeof(u32 [EXPECT_DM_NUM]));
 	memset(&sensor_peri->actuator.pre_frame_cnt, 0, sizeof(u32 [EXPECT_DM_NUM]));
 
-#if !defined(DISABLE_LIB)
-	ret = sensor_module_load_bin();
-	if (ret) {
-		err("sensor_module_load_bin is fail");
-		goto p_err;
-	}
-
 	ret = init_sensor_interface(&sensor_peri->sensor_interface);
 	if (ret) {
 		err("fimc_is_resource_get is fail");
 		goto p_err;
 	}
+
+	subdev_preprocessor = sensor_peri->subdev_preprocessor;
+	if (!subdev_preprocessor)
+		err("[SEN:%d] no subdev_preprocessor", module->sensor_id);
+
+	if (subdev_preprocessor){
+		preprocessor = (struct fimc_is_preprocessor *)v4l2_get_subdevdata(subdev_preprocessor);
+		BUG_ON(!preprocessor);
+	}
+
+	/* wait preproc s_input before init sensor mode change */
+	if (subdev_preprocessor) {
+		ret = CALL_PREPROPOPS(preprocessor, preprocessor_wait_s_input, subdev_preprocessor);
+		if (ret) {
+			err("[SEN:%d] preprocessor wait s_input timeout\n", module->sensor_id);
+			goto p_err;
+		}
+	}
+
+#if !defined(DISABLE_LIB)
+	register_sensor_itf = (register_sensor_interface)SENSOR_REGISTER_FUNC_ADDR;
 #ifdef ENABLE_FPSIMD_FOR_USER
 	fpsimd_get();
 	ret = register_sensor_itf((void *)&sensor_peri->sensor_interface);
@@ -96,6 +100,29 @@ int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 #endif
 	if (ret < 0) {
 		goto p_err;
+	}
+
+#ifdef USE_RTA_BINARY
+	register_sensor_itf = (register_sensor_interface)SENSOR_REGISTER_FUNC_ADDR_RTA;
+#ifdef ENABLE_FPSIMD_FOR_USER
+	fpsimd_get();
+	ret = register_sensor_itf((void *)&sensor_peri->sensor_interface);
+	fpsimd_put();
+#else
+	ret = register_sensor_itf((void *)&sensor_peri->sensor_interface);
+#endif
+	if (ret < 0) {
+		goto p_err;
+	}
+#endif
+
+	subdev_ois = sensor_peri->subdev_ois;
+	if (subdev_ois != NULL) {
+		ret = CALL_OISOPS(&sensor_peri->ois, ois_fw_update, subdev_ois);
+		if (ret < 0) {
+			err("v4l2_subdev_call(ois_fw_update) is fail(%d)", ret);
+			return ret;
+		}
 	}
 #endif
 
@@ -111,15 +138,6 @@ int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 		goto p_err;
 	}
 
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	/* set initial ae setting if initial_ae feature is supported */
-	ret = CALL_CISOPS(&sensor_peri->cis, cis_set_initial_exposure, subdev_cis);
-	if (ret) {
-		err("v4l2_subdev_call(set_initial_exposure) is fail(%d)", ret);
-		goto p_err;
-	}
-#endif
-
 	subdev_flash = sensor_peri->subdev_flash;
 	if (subdev_flash != NULL) {
 		ret = v4l2_subdev_call(subdev_flash, core, init, 0);
@@ -134,6 +152,14 @@ int sensor_module_init(struct v4l2_subdev *subdev, u32 val)
 	if (ret) {
 		err("fimc_is_sensor_init_mode_change is fail(%d)\n", ret);
 		goto p_err;
+	}
+
+	if (subdev_ois != NULL) {
+		ret = CALL_OISOPS(&sensor_peri->ois, ois_init, sensor_peri->subdev_ois);
+		if (ret < 0) {
+			err("v4l2_subdev_call(ois_init) is fail(%d)", ret);
+			return ret;
+		}
 	}
 
 	if (test_bit(FIMC_IS_SENSOR_ACTUATOR_AVAILABLE, &sensor_peri->peri_state) &&
@@ -462,10 +488,18 @@ int sensor_module_s_ctrl(struct v4l2_subdev *subdev, struct v4l2_control *ctrl)
 		break;
 	case V4L2_CID_ACTUATOR_SET_POSITION:
 		ret = v4l2_subdev_call(sensor_peri->subdev_actuator, core, s_ctrl, ctrl);
-		if (ret) {
+		if (ret < 0) {
 			err("[SEN:%d] v4l2_subdev_call(s_ctrl, id:%d) is fail(%d)",
 					module->sensor_id, ctrl->id, ret);
 			goto p_err;
+		}
+
+		if (sensor_peri->subdev_ois != NULL) {
+			ret = CALL_OISOPS(&sensor_peri->ois, ois_shift_compensation, sensor_peri->subdev_ois, ctrl->value);
+			if (ret < 0) {
+				err("ois shift compensation fail");
+				goto p_err;
+			}
 		}
 		break;
 	case V4L2_CID_FLASH_SET_INTENSITY:
@@ -619,22 +653,23 @@ int sensor_module_s_format(struct v4l2_subdev *subdev, struct v4l2_mbus_framefmt
 	device = (struct fimc_is_device_sensor *)v4l2_get_subdev_hostdata(subdev);
 	BUG_ON(!device);
 
-	if (cis->cis_data->sens_config_index_cur != device->cfg->mode || sensor_peri->mode_change_flag == true) {
+	if (cis->cis_data->sens_config_index_cur != device->cfg->mode || sensor_peri->mode_change_first == true) {
 		dbg_sensor("[%s] mode changed(%d->%d)\n", __func__,
 				cis->cis_data->sens_config_index_cur, device->cfg->mode);
 
-		sensor_peri->mode_change_flag = false;
 		cis->cis_data->sens_config_index_cur = device->cfg->mode;
 		cis->cis_data->cur_width = fmt->width;
 		cis->cis_data->cur_height = fmt->height;
+
 		ret = fimc_is_sensor_mode_change(cis, device->cfg->mode);
 		if (ret) {
 			err("[SEN:%d] sensor_mode_change(cis_mode_change) is fail(%d)",
 					module->sensor_id, ret);
 			goto p_err;
 		}
+
 		if (subdev_preprocessor)
-			ret = CALL_PREPROPOPS(preprocessor, preprocessor_mode_change, subdev_preprocessor, device->cfg->mode);
+			ret = CALL_PREPROPOPS(preprocessor, preprocessor_mode_change, subdev_preprocessor, device);
 		if (ret) {
 			err("[SEN:%d] sensor_mode_change(preprocessor_mode_change) is fail(%d)",
 					module->sensor_id, ret);

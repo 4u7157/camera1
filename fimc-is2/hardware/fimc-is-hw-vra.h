@@ -16,6 +16,9 @@
 
 #define VRA_SETFILE_VERSION	0x11030205
 
+#define VRA_CH1_DETECT_MODE	0
+#define VRA_CH1_IMAGE_MODE	1
+
 struct fimc_is_hw_vra_setfile{
     u32 setfile_version;
     u32 tracking_mode;
@@ -56,11 +59,11 @@ int fimc_is_hw_vra_set_param(struct fimc_is_hw_ip *hw_ip,
 int fimc_is_hw_vra_update_param(struct fimc_is_hw_ip *hw_ip,
 	struct vra_param *param, u32 lindex, u32 hindex, u32 instance, u32 fcount);
 int fimc_is_hw_vra_frame_ndone(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame,
-	u32 instance, bool late_flag);
+	u32 instance, enum ShotErrorType done_type);
 void fimc_is_hw_vra_reset(struct fimc_is_hw_ip *hw_ip);
-int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, u32 index,
 	u32 instance, ulong hw_map);
-int fimc_is_hw_vra_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_vra_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenario,
 	u32 instance, ulong hw_map);
 int fimc_is_hw_vra_delete_setfile(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	ulong hw_map);

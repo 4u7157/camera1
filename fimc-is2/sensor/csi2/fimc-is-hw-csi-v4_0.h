@@ -20,7 +20,7 @@
 #define CSIS_REG_DMA_NORMAL			(0)
 #define CSIS_REG_DMA_DUMP			(1)
 
-#if defined(CONFIG_SOC_EXYNOS7870)
+#if defined(CONFIG_SOC_EXYNOS7870) || defined(CONFIG_SOC_EXYNOS7570)
 #define CSIS_REG_DOUBLE_CLK_EN			(0)
 #else
 #define CSIS_REG_DOUBLE_CLK_EN			(1)
@@ -30,6 +30,12 @@
 #define CSIS_IRQ_MASK0 0x0FFFFFFF
 #define CSIS_IRQ_MASK1 0x00003FFF
 #define CSIS_ERR_MASK0 0x000FFFFF
+#define CSIS_ERR_MASK1 0x00003000
+#elif defined (CONFIG_CAMERA_REMOVE_MSK_ERR_ID)
+/* Remove Unknown ID error(IMX241) : Disable MSK_ERR_ID */
+#define CSIS_IRQ_MASK0 0x011FFFFE
+#define CSIS_IRQ_MASK1 0x00003FF0
+#define CSIS_ERR_MASK0 0x000FFFFE
 #define CSIS_ERR_MASK1 0x00003000
 #else
 /* Default Interrupt Masking */
@@ -41,6 +47,13 @@
 
 /* the total count of csis v4.0's regs */
 #define CSIS_REG_CNT 121
+
+/* csis version */
+#define CSIS_V4_0 0x04000000
+#define CSIS_V4_1 0x04010000
+#define CSIS_V4_2 0x04020000
+#define CSIS_V4_3 0x04030000
+
 enum fimc_is_hw_csi_reg_name {
 	CSIS_R_CSIS_VERSION,
 	CSIS_R_CSIS_CMN_CTRL,

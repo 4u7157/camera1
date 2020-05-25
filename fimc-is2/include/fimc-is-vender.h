@@ -16,11 +16,11 @@
 #include <linux/types.h>
 #include <linux/platform_device.h>
 #include <linux/videodev2.h>
-
-#include "fimc-is-device-sensor.h"
+#include "exynos-fimc-is-sensor.h"
 
 #define FIMC_IS_PATH_LEN 100
 #define VENDER_S_CTRL 0
+#define VENDER_G_CTRL 0
 
 struct fimc_is_vender {
 	char fw_path[FIMC_IS_PATH_LEN];
@@ -50,25 +50,17 @@ struct cam_hw_param {
 
 struct cam_hw_param_collector {
 	struct cam_hw_param rear_hwparam;
-	struct cam_hw_param rear2_hwparam;
-	struct cam_hw_param rear3_hwparam;
 	struct cam_hw_param front_hwparam;
-	struct cam_hw_param iris_hwparam;
 } __attribute__((__packed__));
 
 void fimc_is_sec_init_err_cnt_file(struct cam_hw_param *hw_param);
 bool fimc_is_sec_need_update_to_file(void);
 void fimc_is_sec_copy_err_cnt_from_file(void);
 void fimc_is_sec_copy_err_cnt_to_file(void);
-void fimc_is_sec_get_hw_param(struct cam_hw_param **hw_param, u32 position);
+
 int fimc_is_sec_get_rear_hw_param(struct cam_hw_param **hw_param);
 int fimc_is_sec_get_front_hw_param(struct cam_hw_param **hw_param);
-int fimc_is_sec_get_iris_hw_param(struct cam_hw_param **hw_param);
-int fimc_is_sec_get_rear2_hw_param(struct cam_hw_param **hw_param);
-int fimc_is_sec_get_rear3_hw_param(struct cam_hw_param **hw_param);
-bool fimc_is_sec_is_valid_moduleid(char* moduleid);
 #endif
-
 void fimc_is_vendor_csi_stream_on(struct fimc_is_device_csi *csi);
 void fimc_is_vender_csi_err_handler(struct fimc_is_device_csi *csi);
 
@@ -86,14 +78,23 @@ int fimc_is_vender_preprocessor_gpio_on_sel(struct fimc_is_vender *vender, u32 s
 int fimc_is_vender_preprocessor_gpio_on(struct fimc_is_vender *vender, u32 scenario, u32 gpio_scenario);
 int fimc_is_vender_sensor_gpio_on_sel(struct fimc_is_vender *vender, u32 scenario, u32 *gpio_scenario);
 int fimc_is_vender_sensor_gpio_on(struct fimc_is_vender *vender, u32 scenario, u32 gpio_scenario);
-int fimc_is_vender_preprocessor_gpio_off_sel(struct fimc_is_vender *vender, u32 scenario, u32 *gpio_scenario);
+int fimc_is_vender_preprocessor_gpio_off_sel(struct fimc_is_vender *vender, u32 scenario, u32 *gpio_scenario
+#if defined(CONFIG_OIS_USE)
+                ,void *module_data
+#endif
+    );
 int fimc_is_vender_preprocessor_gpio_off(struct fimc_is_vender *vender, u32 scenario, u32 gpio_scenario);
 int fimc_is_vender_sensor_gpio_off_sel(struct fimc_is_vender *vender, u32 scenario, u32 *gpio_scenario);
 int fimc_is_vender_sensor_gpio_off(struct fimc_is_vender *vender, u32 scenario, u32 gpio_scenario);
+void fimc_is_vender_itf_open(struct fimc_is_vender *vender, struct sensor_open_extended *ext_info);
 #ifdef CONFIG_LEDS_SUPPORT_FRONT_FLASH_AUTO
 int fimc_is_vender_set_torch(u32 aeflashMode, u32 frontFlashMode);
 #else
 int fimc_is_vender_set_torch(u32 aeflashMode);
 #endif
 int fimc_is_vender_video_s_ctrl(struct v4l2_control *ctrl, void *device_data);
+int fimc_is_vender_ssx_video_s_ctrl(struct v4l2_control *ctrl, void *device_data);
+int fimc_is_vender_ssx_video_g_ctrl(struct v4l2_control *ctrl, void *device_data);
+int fimc_is_vender_hw_init(struct fimc_is_vender *vender);
+void fimc_is_vender_check_hw_init_running(void);
 #endif

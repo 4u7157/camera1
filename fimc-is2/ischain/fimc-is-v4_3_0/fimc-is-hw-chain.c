@@ -32,6 +32,7 @@
 const struct fimc_is_subdev_ops fimc_is_subdev_scc_ops;
 const struct fimc_is_subdev_ops fimc_is_subdev_scp_ops;
 
+void __iomem *hwfc_rst;
 int fimc_is_hw_group_cfg(void *group_data)
 {
 	int ret = 0;
@@ -118,6 +119,12 @@ int fimc_is_hw_group_cfg(void *group_data)
 		group->subdev[ENTRY_M3P] = &device->m3p;
 		group->subdev[ENTRY_M4P] = &device->m4p;
 		group->subdev[ENTRY_VRA] = &device->group_vra.leader;
+
+		device->m0p.param_dma_ot = PARAM_MCS_OUTPUT0;
+		device->m1p.param_dma_ot = PARAM_MCS_OUTPUT1;
+		device->m2p.param_dma_ot = PARAM_MCS_OUTPUT2;
+		device->m3p.param_dma_ot = PARAM_MCS_OUTPUT3;
+		device->m4p.param_dma_ot = PARAM_MCS_OUTPUT4;
 		break;
 	case GROUP_SLOT_VRA:
 		group->subdev[ENTRY_3AA] = NULL;
@@ -144,6 +151,9 @@ int fimc_is_hw_group_cfg(void *group_data)
 		BUG();
 		break;
 	}
+
+	/* for hwfc */
+	hwfc_rst = ioremap(0x14120850, SZ_4);
 
 	return ret;
 }
@@ -221,38 +231,70 @@ int fimc_is_hw_camif_cfg(void *sensor_data)
 	/* always clear csis dummy */
 	clear_bit(CSIS_DUMMY, &csi->state);
 
-	switch (sensor->instance) {
+	switch (csi->instance) {
 	case 0:
 		clear_bit(FLITE_DUMMY, &flite->state);
 
+#ifdef SOC_SSVC0
+		csi->dma_subdev[ENTRY_SSVC0] = &sensor->ssvc0;
+#else
 		csi->dma_subdev[ENTRY_SSVC0] = NULL;
+#endif
+#ifdef SOC_SSVC1
 		csi->dma_subdev[ENTRY_SSVC1] = &sensor->ssvc1;
+#else
+		csi->dma_subdev[ENTRY_SSVC1] = NULL;
+#endif
+#ifdef SOC_SSVC2
+		csi->dma_subdev[ENTRY_SSVC2] = &sensor->ssvc2;
+#else
 		csi->dma_subdev[ENTRY_SSVC2] = NULL;
+#endif
+#ifdef SOC_SSVC3
+		csi->dma_subdev[ENTRY_SSVC3] = &sensor->ssvc3;
+#else
 		csi->dma_subdev[ENTRY_SSVC3] = NULL;
+#endif
 		break;
-	case 1:
+	case 2:
 		if (is_otf)
 			clear_bit(FLITE_DUMMY, &flite->state);
 		else
 			set_bit(FLITE_DUMMY, &flite->state);
 
+#ifdef SOC_SSVC0
+		csi->dma_subdev[ENTRY_SSVC0] = &sensor->ssvc0;
+#else
 		csi->dma_subdev[ENTRY_SSVC0] = NULL;
+#endif
+#ifdef SOC_SSVC1
 		csi->dma_subdev[ENTRY_SSVC1] = &sensor->ssvc1;
+#else
+		csi->dma_subdev[ENTRY_SSVC1] = NULL;
+#endif
+#ifdef SOC_SSVC2
+		csi->dma_subdev[ENTRY_SSVC2] = &sensor->ssvc2;
+#else
 		csi->dma_subdev[ENTRY_SSVC2] = NULL;
+#endif
+#ifdef SOC_SSVC3
+		csi->dma_subdev[ENTRY_SSVC3] = &sensor->ssvc3;
+#else
 		csi->dma_subdev[ENTRY_SSVC3] = NULL;
+#endif
 		break;
-	case 2:
+	case 1:
 	case 3:
 		set_bit(FLITE_DUMMY, &flite->state);
 		break;
 	default:
-		merr("sensor id is invalid(%d)", sensor, sensor->instance);
+		merr("sensor id is invalid(%d)", sensor, csi->instance);
 		break;
 	}
 
 #ifdef CONFIG_CSIS_V4_0
 	/* HACK: For dual scanario in EVT0, we should use CSI DMA out */
-	if (sensor->instance == 1 && !is_otf) {
+	if (csi->instance == 2 && !is_otf) {
 		struct fimc_is_device_flite backup_flite;
 		struct fimc_is_device_csi backup_csi;
 
@@ -300,13 +342,13 @@ int fimc_is_hw_camif_open(void *sensor_data)
 	flite = (struct fimc_is_device_flite *)v4l2_get_subdevdata(sensor->subdev_flite);
 	csi = (struct fimc_is_device_csi *)v4l2_get_subdevdata(sensor->subdev_csi);
 
-	switch (sensor->instance) {
+	switch (csi->instance) {
 #ifdef CONFIG_CSIS_V4_0
 	case 0:
 		clear_bit(CSIS_DMA_ENABLE, &csi->state);
 		set_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
-	case 1:
+	case 2:
 		clear_bit(CSIS_DMA_ENABLE, &csi->state);
 		set_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
@@ -315,18 +357,18 @@ int fimc_is_hw_camif_open(void *sensor_data)
 		set_bit(CSIS_DMA_ENABLE, &csi->state);
 		clear_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
-	case 1:
+	case 2:
 		set_bit(CSIS_DMA_ENABLE, &csi->state);
 		clear_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
 #endif
-	case 2:
+	case 1:
 	case 3:
 		set_bit(CSIS_DMA_ENABLE, &csi->state);
 		clear_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
 	default:
-		merr("sensor id is invalid(%d)", sensor, sensor->instance);
+		merr("sensor id is invalid(%d)", sensor, csi->instance);
 		break;
 	}
 
@@ -338,6 +380,8 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 	int ret = 0;
 	struct fimc_is_core *core;
 	struct fimc_is_device_ischain *device;
+	struct fimc_is_device_sensor *sensor;
+	struct fimc_is_device_csi *csi;
 	int i, sensor_cnt = 0;
 	void __iomem *regs;
 	u32 val;
@@ -349,6 +393,8 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 		return ret;
 
 	core = (struct fimc_is_core *)platform_get_drvdata(device->pdev);
+	sensor = device->sensor;
+	csi = (struct fimc_is_device_csi *)v4l2_get_subdevdata(sensor->subdev_csi);
 
 	/* checked single/dual camera */
 	for (i = 0; i < FIMC_IS_STREAM_COUNT; i++)
@@ -417,7 +463,7 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 		 * 4) 3AA0 Input Select
 		 *    CSIS0 : 0 (BNS) <= Always
 		 */
-		if (device->sensor->instance == 0) {
+		if (csi->instance == 0) {
 			val = fimc_is_hw_set_field_value(val,
 				&mcuctl_fields[MCUCTRLR2_IN_PATH_SEL_BNS], 0);
 			val = fimc_is_hw_set_field_value(val,
@@ -460,6 +506,70 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 
 	minfo("MCUCTL2 MUX 0x%08X", device, val);
 	fimc_is_hw_set_reg(regs, &mcuctl_regs[MCUCTRLR2], val);
+
+	return ret;
+}
+
+
+int fimc_is_hw_s_ctrl(void *itfc_data, int hw_id, enum hw_s_ctrl_id id, void *val)
+{
+	int ret = 0;
+
+	switch (id) {
+	case HW_S_CTRL_FULL_BYPASS:
+#ifndef ENABLE_IS_CORE
+		{
+			struct fimc_is_interface_ischain *itfc = NULL;
+			unsigned long bypass = (unsigned long)val;
+			u32 values = 0;
+			u32 read_values = 0;
+
+			BUG_ON(!itfc_data);
+
+			itfc = (struct fimc_is_interface_ischain *)itfc_data;
+			switch (hw_id) {
+			case DEV_HW_TPU:
+				values = readl(itfc->regs_mcuctl + MCUCTLR);
+
+				read_values = values & MCUCTLR_TPU_HW_BYPASS(1);
+				if (bypass)
+					values |= MCUCTLR_TPU_HW_BYPASS(1);
+				else
+					values &= ~MCUCTLR_TPU_HW_BYPASS(1);
+
+				if  ((bypass && !read_values) || (!bypass && read_values)) {
+					writel(values, itfc->regs_mcuctl + MCUCTLR);
+					info_itfc("[ID:%d] Full bypass set (%lu)", hw_id, bypass);
+				}
+				break;
+			default:
+				err_itfc("[ID:%d] request_irq [2] fail", hw_id);
+				ret = -EINVAL;
+			}
+		}
+#endif
+		break;
+	case HW_S_CTRL_CHAIN_IRQ:
+#ifndef ENABLE_IS_CORE
+		{
+			struct fimc_is_interface *itf = NULL;
+
+			BUG_ON(!itfc_data);
+
+			itf = (struct fimc_is_interface *)itfc_data;
+
+			writel(0x7fff, itf->regs + INTMR2);
+			info_itfc("hw_s_ctrl: 0x7fff, INTMR2");
+		}
+#endif
+		break;
+	case HW_S_CTRL_HWFC_IDX_RESET:
+		if (hw_id == FIMC_IS_VIDEO_M3P_NUM)
+		        writel((u32)val, hwfc_rst);
+		break;
+	default:
+		break;
+	}
 
 	return ret;
 }

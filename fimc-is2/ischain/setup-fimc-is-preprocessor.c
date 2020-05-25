@@ -121,6 +121,42 @@ int exynos8890_fimc_is_preproc_mclk_off(struct device *dev,
 
 	return 0;
 }
+#elif defined(CONFIG_SOC_EXYNOS7570)
+int exynos7570_fimc_is_preproc_iclk_cfg(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return 0;
+}
+
+int exynos7570_fimc_is_preproc_iclk_on(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return 0;
+}
+
+int exynos7570_fimc_is_preproc_iclk_off(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return 0;
+}
+
+int exynos7570_fimc_is_preproc_mclk_on(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return 0;
+}
+
+int exynos7570_fimc_is_preproc_mclk_off(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return 0;
+}
+
 #elif defined(CONFIG_SOC_EXYNOS7870)
 int exynos7870_fimc_is_preproc_iclk_cfg(struct device *dev,
 	u32 scenario,
@@ -169,6 +205,17 @@ int exynos7880_fimc_is_preproc_iclk_on(struct device *dev,
 	u32 scenario,
 	u32 channel)
 {
+	fimc_is_enable(dev, "sclk_spi_rearfrom");
+	fimc_is_enable(dev, "sclk_spi_frontfrom");
+	fimc_is_enable(dev, "hsi2c_frontcam");
+	fimc_is_enable(dev, "hsi2c_maincam");
+	fimc_is_enable(dev, "hsi2c_depthcam");
+	fimc_is_enable(dev, "hsi2c_frontsensor");
+	fimc_is_enable(dev, "hsi2c_rearaf");
+	fimc_is_enable(dev, "hsi2c_rearsensor");
+	fimc_is_enable(dev, "spi_rearfrom");
+	fimc_is_enable(dev, "spi_frontfrom");
+
 	return 0;
 }
 
@@ -176,6 +223,17 @@ int exynos7880_fimc_is_preproc_iclk_off(struct device *dev,
 	u32 scenario,
 	u32 channel)
 {
+	fimc_is_disable(dev, "sclk_spi_rearfrom");
+	fimc_is_disable(dev, "sclk_spi_frontfrom");
+	fimc_is_disable(dev, "hsi2c_frontcam");
+	fimc_is_disable(dev, "hsi2c_maincam");
+	fimc_is_disable(dev, "hsi2c_depthcam");
+	fimc_is_disable(dev, "hsi2c_frontsensor");
+	fimc_is_disable(dev, "hsi2c_rearaf");
+	fimc_is_disable(dev, "hsi2c_rearsensor");
+	fimc_is_disable(dev, "spi_rearfrom");
+	fimc_is_disable(dev, "spi_frontfrom");
+
 	return 0;
 }
 
@@ -183,6 +241,15 @@ int exynos7880_fimc_is_preproc_mclk_on(struct device *dev,
 	u32 scenario,
 	u32 channel)
 {
+	char sclk_name[30];
+
+	pr_debug("%s(scenario : %d / ch : %d)\n", __func__, scenario, channel);
+
+	snprintf(sclk_name, sizeof(sclk_name), "isp_sensor%d_sclk", channel);
+
+	fimc_is_enable(dev, sclk_name);
+	fimc_is_set_rate(dev, sclk_name, 26 * 1000000);
+
 	return 0;
 }
 
@@ -190,6 +257,14 @@ int exynos7880_fimc_is_preproc_mclk_off(struct device *dev,
 	u32 scenario,
 	u32 channel)
 {
+	char sclk_name[30];
+
+	pr_debug("%s(scenario : %d / ch : %d)\n", __func__, scenario, channel);
+
+	snprintf(sclk_name, sizeof(sclk_name), "isp_sensor%d_sclk", channel);
+
+	fimc_is_disable(dev, sclk_name);
+
 	return 0;
 }
 #endif
@@ -201,6 +276,8 @@ int exynos_fimc_is_preproc_iclk_cfg(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_preproc_iclk_cfg(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_preproc_iclk_cfg(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_preproc_iclk_cfg(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -217,6 +294,8 @@ int exynos_fimc_is_preproc_iclk_on(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_preproc_iclk_on(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_preproc_iclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_preproc_iclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -233,6 +312,8 @@ int exynos_fimc_is_preproc_iclk_off(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_preproc_iclk_off(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_preproc_iclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_preproc_iclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -249,6 +330,8 @@ int exynos_fimc_is_preproc_mclk_on(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_preproc_mclk_on(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_preproc_mclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_preproc_mclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -265,6 +348,8 @@ int exynos_fimc_is_preproc_mclk_off(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_preproc_mclk_off(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_preproc_mclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_preproc_mclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)

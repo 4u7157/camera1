@@ -161,11 +161,6 @@ int sensor_3p3_cis_init(struct v4l2_subdev *subdev)
 	struct fimc_is_cis *cis;
 	u32 setfile_index = 0;
 	cis_setting_info setinfo;
-#ifdef USE_CAMERA_HW_BIG_DATA
-	struct cam_hw_param *hw_param = NULL;
-	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
-#endif
-
 	setinfo.param = NULL;
 	setinfo.return_value = 0;
 
@@ -184,15 +179,6 @@ int sensor_3p3_cis_init(struct v4l2_subdev *subdev)
 
 	ret = sensor_cis_check_rev(cis);
 	if (ret < 0) {
-#ifdef USE_CAMERA_HW_BIG_DATA
-		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
-		if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
-			fimc_is_sec_get_rear_hw_param(&hw_param);
-		else if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
-			fimc_is_sec_get_front_hw_param(&hw_param);
-		if (hw_param)
-			hw_param->i2c_sensor_err_cnt++;
-#endif
 		warn("sensor_3p3_check_rev is fail when cis init");
 		cis->rev_flag = true;
 		ret = 0;
@@ -1171,10 +1157,6 @@ int sensor_3p3_cis_set_analog_gain(struct v4l2_subdev *subdev, struct ae_param *
 	}
 
 	if (analog_gain > cis->cis_data->max_analog_gain[0]) {
-		err("wrong analog gain, input (x%d, %d), max (x%d, %d)",
-			again->val, analog_gain,
-			cis->cis_data->max_analog_gain[1],
-			cis->cis_data->max_analog_gain[0]);
 		analog_gain = cis->cis_data->max_analog_gain[0];
 	}
 
@@ -1409,10 +1391,6 @@ int sensor_3p3_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		long_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (long_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital long gain, input (x%d, %d), max (x%d, %d)\n",
-			dgain->long_val, long_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		long_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1420,10 +1398,6 @@ int sensor_3p3_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		short_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (short_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital short gain, input (x%d, %d), max (x%d, %d)",
-			dgain->short_val, short_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		short_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1436,11 +1410,19 @@ int sensor_3p3_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		goto p_err;
 	}
 
-	dgains[0] = dgains[1] = dgains[2] = dgains[3] = long_gain;
-	/* Long digital gain */
+	dgains[0] = dgains[1] = dgains[2] = dgains[3] = short_gain;
+	/* Short digital gain */
 	ret = fimc_is_sensor_write16_array(client, 0x020E, dgains, 4);
 	if (ret < 0)
 		goto p_err;
+
+	/* Long digital gain */
+	if (cis_data->companion_data.enable_wdr == true) {
+		dgains[0] = dgains[1] = dgains[2] = dgains[3] = long_gain;
+		ret = fimc_is_sensor_write16_array(client, 0x3062, dgains, 4);
+		if (ret < 0)
+			goto p_err;
+	}
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -1691,7 +1673,18 @@ int cis_3p3_probe(struct i2c_client *client,
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
-	cis->aperture_num = F2_2;
+
+	if (of_property_read_bool(dnode, "sensor_f_number")) {
+		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
+		if (ret) {
+			warn("f-number read is fail(%d)",ret);
+		}
+	} else {
+		cis->aperture_num = F2_2;
+	}
+
+	probe_info("%s f-number %d\n", __func__, cis->aperture_num);
+
 	cis->use_dgain = true;
 	cis->hdr_ctrl_by_again = false;
 

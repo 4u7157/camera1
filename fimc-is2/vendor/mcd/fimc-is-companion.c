@@ -36,7 +36,7 @@
 #define COMP_FW_EVT1			"companion_fw_evt1.bin"
 #define COMP_SETFILE_MASTER		"companion_master_setfile.bin"
 #define COMP_SETFILE_MODE		"companion_mode_setfile.bin"
-#define COMP_CAL_DATA		"cal"
+#define COMP_CAL_DATA			"cal"
 #define COMP_LSC			"lsc"
 #define COMP_PDAF			"pdaf"
 #define COMP_COEF_CAL			"coef"

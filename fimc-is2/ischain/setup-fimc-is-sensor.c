@@ -278,6 +278,70 @@ int exynos8890_fimc_is_sensor_mclk_off(struct device *dev,
 
 	return 0;
 }
+#elif defined(CONFIG_SOC_EXYNOS7570)
+int exynos7570_fimc_is_sensor_iclk_cfg(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	return  0;
+}
+
+int exynos7570_fimc_is_sensor_iclk_on(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	int ret = 0;
+
+	/* CSI */
+	fimc_is_enable(dev, "isp_cam");
+	fimc_is_enable(dev, "umux_isp_clkphy_isp_s_rxbyteclkhs0_s4_user");
+
+	return ret;
+}
+
+int exynos7570_fimc_is_sensor_iclk_off(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	int ret = 0;
+
+	/* CSI */
+	fimc_is_disable(dev, "isp_cam");
+	fimc_is_disable(dev, "umux_isp_clkphy_isp_s_rxbyteclkhs0_s4_user");
+
+	return ret;
+}
+
+int exynos7570_fimc_is_sensor_mclk_on(struct device *dev,
+	u32 scenario,
+	u32 channel)
+{
+	char sclk_name[30];
+
+	pr_debug("%s(scenario : %d / ch : %d)\n", __func__, scenario, channel);
+
+	snprintf(sclk_name, sizeof(sclk_name), "mif_isp_sensor%d", channel);
+
+	fimc_is_enable(dev, sclk_name);
+	fimc_is_set_rate(dev, sclk_name, 24375000);
+
+	return 0;
+}
+
+int exynos7570_fimc_is_sensor_mclk_off(struct device *dev,
+		u32 scenario,
+		u32 channel)
+{
+	char sclk_name[30];
+
+	pr_debug("%s(scenario : %d / ch : %d)\n", __func__, scenario, channel);
+
+	snprintf(sclk_name, sizeof(sclk_name), "mif_isp_sensor%d", channel);
+
+	fimc_is_disable(dev, sclk_name);
+
+	return 0;
+}
 #elif defined(CONFIG_SOC_EXYNOS7870)
 static int exynos7870_fimc_is_csi_gate(struct device *dev, u32 instance, bool mask)
 {
@@ -461,7 +525,7 @@ int exynos7880_fimc_is_sensor_iclk_on(struct device *dev,
 		break;
 	}
 
-#if defined(CONFIG_VENDOR_PSV)
+#if defined(CONFIG_VENDER_PSV)
 	/* ISP */
 	fimc_is_enable(dev, "gate_isp_sysmmu");
 	fimc_is_enable(dev, "gate_isp_ppmu");
@@ -487,7 +551,7 @@ int exynos7880_fimc_is_sensor_iclk_off(struct device *dev,
 	/* CSI */
 	exynos7880_fimc_is_csi_gate(dev, channel, true);
 
-#if defined(CONFIG_VENDOR_PSV)
+#if defined(CONFIG_VENDER_PSV)
 	/* ISP */
 	fimc_is_disable(dev, "gate_isp_sysmmu");
 	fimc_is_disable(dev, "gate_isp_ppmu");
@@ -541,6 +605,8 @@ int exynos_fimc_is_sensor_iclk_cfg(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_sensor_iclk_cfg(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_sensor_iclk_cfg(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_sensor_iclk_cfg(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -557,6 +623,8 @@ int exynos_fimc_is_sensor_iclk_on(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_sensor_iclk_on(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_sensor_iclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_sensor_iclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -573,6 +641,8 @@ int exynos_fimc_is_sensor_iclk_off(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_sensor_iclk_off(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_sensor_iclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_sensor_iclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -589,6 +659,8 @@ int exynos_fimc_is_sensor_mclk_on(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_sensor_mclk_on(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_sensor_mclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_sensor_mclk_on(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)
@@ -605,6 +677,8 @@ int exynos_fimc_is_sensor_mclk_off(struct device *dev,
 {
 #if defined(CONFIG_SOC_EXYNOS8890)
 	exynos8890_fimc_is_sensor_mclk_off(dev, scenario, channel);
+#elif defined(CONFIG_SOC_EXYNOS7570)
+	exynos7570_fimc_is_sensor_mclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7870)
 	exynos7870_fimc_is_sensor_mclk_off(dev, scenario, channel);
 #elif defined(CONFIG_SOC_EXYNOS7880)

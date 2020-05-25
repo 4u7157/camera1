@@ -39,10 +39,18 @@
 #include "fimc-is-device-module-base.h"
 
 static struct fimc_is_sensor_cfg config_module_6b2[] = {
-	/* 5968x3368@30fps */
-	FIMC_IS_SENSOR_CFG(1936, 1090, 30, 19, 0, CSI_DATA_LANES_2),
-	/* for FPGA, actual FPS is 1fps */
-	FIMC_IS_SENSOR_CFG(656, 490, 30, 12, 1, CSI_DATA_LANES_2),
+	/* 1936x1090 @30fps */
+	FIMC_IS_SENSOR_CFG(1936, 1090, 30, 8, 0, CSI_DATA_LANES_2),
+	/* 1920x1080 @30fps */
+	FIMC_IS_SENSOR_CFG(1920, 1080, 30, 8, 1, CSI_DATA_LANES_2),
+	/* 1280x960 @30fps */
+	FIMC_IS_SENSOR_CFG(1280, 960, 30, 8, 2, CSI_DATA_LANES_2),
+	/* 1280x720 @30fps */
+	FIMC_IS_SENSOR_CFG(1280, 720, 30, 8, 3, CSI_DATA_LANES_2),
+	/* 968x548 @22fps */
+	FIMC_IS_SENSOR_CFG(968, 548, 22, 5, 4, CSI_DATA_LANES_2),
+	/* 968x548 @15fps */
+	FIMC_IS_SENSOR_CFG(968, 548, 15, 5, 5, CSI_DATA_LANES_2),
 };
 
 static struct fimc_is_vci vci_module_6b2[] = {
@@ -84,7 +92,7 @@ static int sensor_module_6b2_power_setpin(struct platform_device *pdev,
 	struct device *dev;
 	struct device_node *dnode;
 	int gpio_reset = 0;
-	int gpio_comp_rst = 0;
+	int gpio_stby = 0;
 	int gpio_none = 0;
 
 	BUG_ON(!pdev);
@@ -94,14 +102,6 @@ static int sensor_module_6b2_power_setpin(struct platform_device *pdev,
 
 	dev_info(dev, "%s E v4\n", __func__);
 
-	if (pdata->preprocessor_product_name != PREPROCESSOR_NAME_NOTHING) {
-		gpio_comp_rst = of_get_named_gpio(dnode, "gpio_comp_reset", 0);
-		if (!gpio_is_valid(gpio_comp_rst)) {
-			dev_err(dev, "failed to get main comp reset gpio\n");
-			return -EINVAL;
-		}
-	}
-
 	gpio_reset = of_get_named_gpio(dnode, "gpio_reset", 0);
 	if (!gpio_is_valid(gpio_reset)) {
 		dev_err(dev, "failed to get PIN_RESET\n");
@@ -109,6 +109,14 @@ static int sensor_module_6b2_power_setpin(struct platform_device *pdev,
 	} else {
 		gpio_request_one(gpio_reset, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
 		gpio_free(gpio_reset);
+	}
+
+	gpio_stby = of_get_named_gpio(dnode, "gpio_stby", 0);
+	if (!gpio_is_valid(gpio_stby)) {
+		dev_err(dev, "failed to get gpio_stby\n");
+	} else {
+		gpio_request_one(gpio_stby, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
+		gpio_free(gpio_stby);
 	}
 
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON);
@@ -122,17 +130,20 @@ static int sensor_module_6b2_power_setpin(struct platform_device *pdev,
 
 	/* FRONT CAMERA - POWER ON */
 	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
-	SET_PIN_VOLTAGE(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "CAM_DOVDD_1V8", PIN_REGULATOR, 1, 0, 0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "ldo1", PIN_REGULATOR, 1, 0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 0, 0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst high", PIN_OUTPUT, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 1, 10);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 1, 5000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 2, 2000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_stby, "sen_stby high", PIN_OUTPUT, 1, 40000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst high", PIN_OUTPUT, 1, 10000);
 
 	/* FRONT CAMERA - POWER OFF */
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, "sen_rst", PIN_RESET, 0, 0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, "sen_rst input", PIN_INPUT, 0 ,0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "CAM_DOVDD_1V8", PIN_REGULATOR, 0, 0);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "ldo1", PIN_REGULATOR, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 0);
 	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 1500);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_stby, "sen_stby low", PIN_OUTPUT, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 0, 0);
 
 	/* FRONT CAEMRA - VISION POWER ON */
 	SET_PIN(pdata, SENSOR_SCENARIO_VISION, GPIO_SCENARIO_ON, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
@@ -200,7 +211,7 @@ int sensor_module_6b2_probe(struct platform_device *pdev)
 	module->pixel_height = module->active_height;
 	module->max_framerate = 30;
 	module->position = pdata->position;
-	module->mode = CSI_MODE_DT_ONLY;
+	module->mode = CSI_MODE_CH0_ONLY;
 	module->lanes = CSI_DATA_LANES_2;
 	module->bitwidth = 10;
 	module->vcis = ARRAY_SIZE(vci_module_6b2);

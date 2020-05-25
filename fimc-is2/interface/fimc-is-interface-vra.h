@@ -17,7 +17,7 @@
 #include "fimc-is-config.h"
 #if defined(CONFIG_FIMC_IS_V4_0_0)
 #include "fimc-is-lib-vra_v1_1.h"
-#elif defined(CONFIG_FIMC_IS_V3_11_0) || defined(CONFIG_FIMC_IS_V5_10_0)
+#elif defined(CONFIG_FIMC_IS_V3_11_0) || defined(CONFIG_FIMC_IS_V3_20_0) || defined(CONFIG_FIMC_IS_V5_10_0) || defined(CONFIG_FIMC_IS_V4_3_0)
 #include "fimc-is-lib-vra_v1_10.h"
 #endif
 
@@ -102,8 +102,8 @@ struct fimc_is_lib_vra_interface_funcs {
 			enum api_vra_orientation *orientation);
 	enum api_vra_type (*on_new_frame)(void *sen_obj_ptr,
 			vra_uint32 unique_index,
-			vra_uint32 diff_prev_fr_100_micro,
-			unsigned char *base_adrress);
+			unsigned char *base_adrress_kva,
+			unsigned char *base_adrress_dva);
 	enum api_vra_type (*on_control_task_event)(void *fr_obj_ptr);
 	enum api_vra_type (*on_fw_algs_task_event)(void *fr_obj_ptr);
 	enum api_vra_type (*on_interrupt)(void *fr_obj_ptr, unsigned int index);
@@ -204,10 +204,10 @@ int fimc_is_lib_vra_apply_tune(struct fimc_is_lib_vra *lib_vra,
 int fimc_is_lib_vra_set_orientation(struct fimc_is_lib_vra *lib_vra,
 	u32 orientation, u32 instance);
 int fimc_is_lib_vra_new_frame(struct fimc_is_lib_vra *lib_vra,
-	unsigned char *buffer, u32 instance);
+	unsigned char *buffer_kva, unsigned char *buffer_dva, u32 instance);
 int fimc_is_lib_vra_handle_interrupt(struct fimc_is_lib_vra *lib_vra, u32 id);
 int fimc_is_lib_vra_get_meta(struct fimc_is_lib_vra *lib_vra,
-	struct fimc_is_frame *frame);
+	struct camera2_shot *shot);
 int fimc_is_lib_vra_test_image_load(struct fimc_is_lib_vra *lib_vra);
 
 #ifdef DEBUG_HW_SIZE

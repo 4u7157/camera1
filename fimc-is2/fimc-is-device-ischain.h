@@ -39,6 +39,8 @@
 #define MODULE_MASK			0x000000FF
 
 #define FIMC_IS_SETFILE_MASK		0x0000FFFF
+#define FIMC_IS_SCENARIO_MASK		0xFFFF0000
+#define FIMC_IS_SCENARIO_SHIFT		16
 #define FIMC_IS_ISP_CRANGE_MASK		0x0F000000
 #define FIMC_IS_ISP_CRANGE_SHIFT	24
 #define FIMC_IS_SCC_CRANGE_MASK		0x00F00000
@@ -67,12 +69,17 @@ enum fimc_is_camera_device {
 	CAMERA_SINGLE_FRONT,
 };
 
+struct fast_control_mgr {
+	u32 fast_capture_count;
+};
+
 struct fimc_is_device_ischain {
 	struct platform_device			*pdev;
 	struct exynos_platform_fimc_is		*pdata;
 
 	struct fimc_is_resourcemgr		*resourcemgr;
 	struct fimc_is_groupmgr			*groupmgr;
+	struct fimc_is_devicemgr		*devicemgr;
 	struct fimc_is_interface		*interface;
 #ifndef ENABLE_IS_CORE
 	struct fimc_is_hardware			*hardware;
@@ -139,6 +146,9 @@ struct fimc_is_device_ischain {
 	u32					private_data;
 	struct fimc_is_device_sensor		*sensor;
 	struct pm_qos_request			user_qos;
+
+	/* Async metadata control to reduce frame delay */
+	struct fast_control_mgr			fastctlmgr;
 };
 
 /*global function*/
@@ -146,6 +156,7 @@ int fimc_is_ischain_probe(struct fimc_is_device_ischain *device,
 	struct fimc_is_interface *interface,
 	struct fimc_is_resourcemgr *resourcemgr,
 	struct fimc_is_groupmgr *groupmgr,
+	struct fimc_is_devicemgr *devicemgr,
 	struct fimc_is_mem *mem,
 	struct platform_device *pdev,
 	u32 instance);
@@ -155,6 +166,10 @@ void fimc_is_ischain_meta_invalid(struct fimc_is_frame *frame);
 
 int fimc_is_ischain_open_wrap(struct fimc_is_device_ischain *device, bool EOS);
 int fimc_is_ischain_close_wrap(struct fimc_is_device_ischain *device);
+int fimc_is_ischain_start_wrap(struct fimc_is_device_ischain *device,
+	struct fimc_is_group *group);
+int fimc_is_ischain_stop_wrap(struct fimc_is_device_ischain *device,
+	struct fimc_is_group *group);
 
 void fimc_is_ischain_version(enum fimc_is_bin_type type, const char *load_bin, u32 size);
 /* 3AA subdev */

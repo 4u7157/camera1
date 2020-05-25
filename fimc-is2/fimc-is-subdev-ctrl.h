@@ -39,15 +39,13 @@ struct fimc_is_subdev_path {
 	struct fimc_is_crop			crop;
 };
 
-enum fimc_is_sensor_subdev_id {
+enum fimc_is_subdev_id {
+	ENTRY_SENSOR,
 	ENTRY_SSVC0,
 	ENTRY_SSVC1,
 	ENTRY_SSVC2,
 	ENTRY_SSVC3,
-	ENTRY_SEN_END
-};
-
-enum fimc_is_ischain_subdev_id {
+	ENTRY_BNS,
 	ENTRY_3AA,
 	ENTRY_3AC,
 	ENTRY_3AP,
@@ -67,11 +65,14 @@ enum fimc_is_ischain_subdev_id {
 	ENTRY_M3P,
 	ENTRY_M4P,
 	ENTRY_VRA,
-	ENTRY_ISCHAIN_END
+	ENTRY_END
 };
 
 struct fimc_is_subdev_ops {
-	int (*bypass)(void);
+	int (*bypass)(struct fimc_is_subdev *subdev,
+		void *device_data,
+		struct fimc_is_frame *frame,
+		bool bypass);
 	int (*cfg)(struct fimc_is_subdev *subdev,
 		void *device_data,
 		struct fimc_is_frame *frame,

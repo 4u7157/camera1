@@ -45,6 +45,11 @@ static const char * const frame_state_name[NR_FRAME_STATE] = {
 	"Complete"
 };
 
+int frame_fcount(struct fimc_is_frame *frame, void *data)
+{
+	return frame->fcount - (u32)(ulong)data;
+}
+
 int put_frame(struct fimc_is_framemgr *this, struct fimc_is_frame *frame,
 			enum fimc_is_frame_state state)
 {

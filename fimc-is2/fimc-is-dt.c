@@ -37,7 +37,7 @@
 #include <linux/delay.h>
 #include <linux/clk-provider.h>
 #include <linux/clkdev.h>
-#include <mach/map.h>
+//#include <mach/map.h>
 #include <media/v4l2-subdev.h>
 #endif
 
@@ -171,6 +171,9 @@ static int parse_dvfs_data(struct exynos_platform_fimc_is *pdata, struct device_
 
 		sprintf(buf, "%s%s", fimc_is_dvfs_dt_arr[i].parse_scenario_nm, "i2c");
 		DT_READ_U32(np, buf, pdata->dvfs_data[index][fimc_is_dvfs_dt_arr[i].scenario_id][FIMC_IS_DVFS_I2C]);
+
+		sprintf(buf, "%s%s", fimc_is_dvfs_dt_arr[i].parse_scenario_nm, "hpg");
+		DT_READ_U32(np, buf, pdata->dvfs_data[index][fimc_is_dvfs_dt_arr[i].scenario_id][FIMC_IS_DVFS_HPG]);
 	}
 
 #ifdef DBG_DUMP_DVFS_DT
@@ -180,6 +183,7 @@ static int parse_dvfs_data(struct exynos_platform_fimc_is *pdata, struct device_
 		probe_info("[%d][%d][CAM] = %d", index, i, pdata->dvfs_data[index][i][FIMC_IS_DVFS_CAM]);
 		probe_info("[%d][%d][MIF] = %d", index, i, pdata->dvfs_data[index][i][FIMC_IS_DVFS_MIF]);
 		probe_info("[%d][%d][I2C] = %d", index, i, pdata->dvfs_data[index][i][FIMC_IS_DVFS_I2C]);
+		probe_info("[%d][%d][HPG] = %d", index, i, pdata->dvfs_data[index][i][FIMC_IS_DVFS_HPG]);
 	}
 #endif
 	return 0;
@@ -389,20 +393,6 @@ int fimc_is_preprocessor_parse_dt(struct platform_device *pdev)
 		goto p_err;
 	}
 
-	ret = of_property_read_string(dnode, "pinctrl_name", (const char **)&pdata->pinctrl_name);
-	if (ret) {
-		probe_warn("fail to read, pinctrl_name");
-		pdata->pinctrl_name = NULL;
-		ret = 0;
-	}
-
-	ret = of_property_read_string(dnode, "int_pin_name", (const char **)&pdata->int_pin_name);
-	if (ret) {
-		probe_warn("fail to read, int_pin_name");
-		pdata->int_pin_name = NULL;
-		ret = 0;
-	}
-
 	pdata->iclk_cfg = exynos_fimc_is_preproc_iclk_cfg;
 	pdata->iclk_on = exynos_fimc_is_preproc_iclk_on;
 	pdata->iclk_off = exynos_fimc_is_preproc_iclk_off;
@@ -468,6 +458,57 @@ static int parse_ois_data(struct exynos_platform_fimc_is_module *pdata, struct d
 	return 0;
 }
 
+static int parse_power_seq_data(struct exynos_platform_fimc_is_module *pdata, struct device_node *dnode)
+{
+	u32 temp;
+	char *pprop;
+	char *name;
+	struct device_node *sn_np, *seq_np;
+
+	for_each_child_of_node(dnode, sn_np) {
+		u32 sensor_scenario, gpio_scenario;
+
+		DT_READ_U32(sn_np, "sensor_scenario", sensor_scenario);
+		DT_READ_U32(sn_np, "gpio_scenario",gpio_scenario);
+
+		pr_info("power_seq[%s] : sensor_scenario=%d, gpio_scenario=%d\n",
+			sn_np->name, sensor_scenario, gpio_scenario);
+
+		SET_PIN_INIT(pdata, sensor_scenario, gpio_scenario);
+
+		for_each_child_of_node(sn_np, seq_np) {
+			struct exynos_sensor_pin sensor_pin;
+			char* pin_name;
+
+			memset(&sensor_pin, 0, sizeof(struct exynos_sensor_pin));
+
+			DT_READ_STR(seq_np, "pin", pin_name);
+			if(!strcmp(pin_name, "gpio_none"))
+				sensor_pin.pin = 0;
+			else
+				sensor_pin.pin = of_get_named_gpio(dnode->parent, pin_name, 0);
+
+			DT_READ_STR(seq_np, "pname", sensor_pin.name);
+			if(sensor_pin.name[0] == '\0')
+				sensor_pin.name = NULL;
+
+			DT_READ_U32(seq_np, "act", sensor_pin.act);
+			DT_READ_U32(seq_np, "value", sensor_pin.value);
+			DT_READ_U32(seq_np, "delay", sensor_pin.delay);
+			DT_READ_U32(seq_np, "voltage", sensor_pin.voltage);
+
+			pr_debug("power_seq node_name=%s\n", seq_np->full_name);
+			pr_info("power_seq SET_PIN: pin_name=%s, name=%s, act=%d, value=%d, delay=%d, voltage=%d\n",
+				pin_name, sensor_pin.name, sensor_pin.act, sensor_pin.value, sensor_pin.delay, sensor_pin.voltage);
+
+			SET_PIN_VOLTAGE(pdata, sensor_scenario, gpio_scenario, sensor_pin.pin, sensor_pin.name,
+				sensor_pin.act, sensor_pin.value, sensor_pin.delay, sensor_pin.voltage);
+		}
+	}
+
+	return 0;
+}
+
 /* Deprecated. Use  fimc_is_module_parse_dt */
 int fimc_is_sensor_module_parse_dt(struct platform_device *pdev,
 	fimc_is_moudle_dt_callback module_callback)
@@ -479,6 +520,7 @@ int fimc_is_sensor_module_parse_dt(struct platform_device *pdev,
 	struct device_node *flash_np;
 	struct device_node *preprocessor_np;
 	struct device_node *ois_np;
+	struct device_node *power_np;
 	struct device *dev;
 
 	BUG_ON(!pdev);
@@ -558,10 +600,21 @@ int fimc_is_sensor_module_parse_dt(struct platform_device *pdev,
 		parse_ois_data(pdata, ois_np);
 	}
 
-	ret = module_callback(pdev, pdata);
-	if (ret) {
-		probe_err("sensor dt callback is fail(%d)", ret);
-		goto p_err;
+	pdata->power_seq_dt = of_property_read_bool(dnode, "use_power_seq");
+	if(pdata->power_seq_dt == true) {
+		power_np = of_find_node_by_name(dnode, "power_seq");
+		if (!power_np) {
+			probe_err("power sequence is not declared to DT");
+			goto p_err;
+		} else {
+			parse_power_seq_data(pdata, power_np);
+		}
+	} else {
+		ret = module_callback(pdev, pdata);
+		if (ret) {
+			probe_err("sensor dt callback is fail(%d)", ret);
+			goto p_err;
+		}
 	}
 
 	pdata->pinctrl = devm_pinctrl_get(dev);
@@ -585,7 +638,7 @@ p_err:
 	return ret;
 }
 
-/* New function for module parse dt. Use this instead of fimc_is_sensor_module_parse_dt */ 
+/* New function for module parse dt. Use this instead of fimc_is_sensor_module_parse_dt */
 int fimc_is_module_parse_dt(struct device *dev,
 	fimc_is_moudle_callback module_callback)
 {
@@ -703,10 +756,9 @@ static int exynos_fimc_is_module_soc_pin_control(struct i2c_client *client,
 	u32 delay = pin_ctrls->delay;
 	u32 value = pin_ctrls->value;
 	u32 voltage = pin_ctrls->voltage;
-	enum pin_act act = pin_ctrls->act;
 	int ret = 0;
 
-	switch (act) {
+	switch (pin_ctrls->act) {
 	case PIN_NONE:
 		usleep_range(delay, delay);
 		break;
@@ -866,9 +918,8 @@ static int exynos_fimc_is_module_soc_pin_debug(struct i2c_client *client,
 	int ret = 0;
 	ulong pin = pin_ctrls->pin;
 	char* name = pin_ctrls->name;
-	enum pin_act act = pin_ctrls->act;
 
-	switch (act) {
+	switch (pin_ctrls->act) {
 	case PIN_NONE:
 		break;
 	case PIN_OUTPUT:

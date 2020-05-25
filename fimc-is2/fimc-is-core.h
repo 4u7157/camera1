@@ -38,6 +38,7 @@
 #include "fimc-is-interface.h"
 #include "fimc-is-framemgr.h"
 #include "fimc-is-resourcemgr.h"
+#include "fimc-is-devicemgr.h"
 #include "fimc-is-device-sensor.h"
 #include "fimc-is-device-ischain.h"
 #ifndef ENABLE_IS_CORE
@@ -207,6 +208,19 @@ struct fimc_is_sysfs_actuator {
 };
 #endif
 
+#ifdef FIXED_SENSOR_DEBUG
+struct fimc_is_sysfs_sensor {
+	bool		is_en;
+	unsigned int	frame_duration;
+	unsigned int	long_exposure_time;
+	unsigned int	short_exposure_time;
+	unsigned int	long_analog_gain;
+	unsigned int	short_analog_gain;
+	unsigned int	long_digital_gain;
+	unsigned int	short_digital_gain;
+};
+#endif
+
 struct fimc_is_core {
 	struct platform_device			*pdev;
 	struct resource				*regs_res;
@@ -215,12 +229,15 @@ struct fimc_is_core {
 	u32					current_position;
 	atomic_t				rsccount;
 	unsigned long				state;
+	bool					shutdown;
+	bool					reboot;
 
 	/* depended on isp */
 	struct exynos_platform_fimc_is		*pdata;
 
 	struct fimc_is_resourcemgr		resourcemgr;
 	struct fimc_is_groupmgr			groupmgr;
+	struct fimc_is_devicemgr		devicemgr;
 	struct fimc_is_interface		interface;
 
 	struct fimc_is_device_preproc		preproc;
@@ -266,9 +283,6 @@ struct fimc_is_core {
 	struct i2c_client			*client2;
 
 	struct fimc_is_vender			vender;
-#ifdef CONFIG_OIS_USE
-	bool						ois_ver_read;
-#endif
 };
 
 #if defined(CONFIG_VIDEOBUF2_CMA_PHYS)
@@ -285,6 +299,7 @@ int fimc_is_init_set(struct fimc_is_core *dev , u32 val);
 int fimc_is_load_fw(struct fimc_is_core *dev);
 int fimc_is_load_setfile(struct fimc_is_core *dev);
 int fimc_is_otf_close(struct fimc_is_device_ischain *ischain);
+void fimc_is_cleanup(struct fimc_is_core *core);
 
 #define CALL_POPS(s, op, args...) (((s) && (s)->pdata && (s)->pdata->op) ? ((s)->pdata->op(&(s)->pdev->dev)) : -EPERM)
 

@@ -47,14 +47,8 @@
 
 static const struct v4l2_subdev_ops subdev_ops;
 
-static const u32 *sensor_3l2_init_setfile_reset;
-static u32 sensor_3l2_init_setfile_reset_size;
-static const u32 *sensor_3l2_init_setfile_other;
-static u32 sensor_3l2_init_setfile_other_size;
-
-static u16 *sensor_3l2_init_setfile_burst;
-static u32 sensor_3l2_init_setfile_burst_size;
-
+static const u32 *sensor_3l2_global;
+static u32 sensor_3l2_global_size;
 static const u32 **sensor_3l2_setfiles;
 static const u32 *sensor_3l2_setfile_sizes;
 static const struct sensor_pll_info **sensor_3l2_pllinfos;
@@ -162,92 +156,17 @@ static int sensor_3l2_wait_stream_off_status(cis_shared_data *cis_data)
 	return ret;
 }
 
-int sensor_3l2_cis_sw_reset(struct v4l2_subdev *subdev)
-{
-	int ret = 0;
-	struct fimc_is_cis *cis;
-	struct i2c_client *client;
-
-	BUG_ON(!subdev);
-
-	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
-
-	BUG_ON(!cis);
-
-	client = cis->client;
-	if (unlikely(!client)) {
-		err("client is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-
-	dbg_sensor("[MOD:D:%d] %s\n", cis->id, __func__);
-
-	/* sw reset */
-	ret = fimc_is_sensor_write16(client, 0xFCFC, 0xD000);
-	if (ret < 0) {
-		err("i2c transfer fail addr(%x), val(%x), ret = %d\n", 0xFCFC, 0xD000, ret);
-		goto p_err;
-	}
-
-	ret = fimc_is_sensor_write16(client, 0x6010, 0x0001);
-	if (ret < 0) {
-		err("i2c transfer fail addr(%x), val(%x), ret = %d\n", 0x6010, 0x0001, ret);
-		goto p_err;
-	}
-
-	/* 3ms delay is needed after s/w reset */
-	mdelay(3);
-
-p_err:
-	return ret;
-}
-
-int sensor_3l2_cis_set_registers_burst(struct v4l2_subdev *subdev)
-{
-	int ret = 0;
-	struct fimc_is_cis *cis;
-	struct i2c_client *client;
-
-	BUG_ON(!subdev);
-
-	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
-	if (!cis) {
-		err("cis is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-
-	client = cis->client;
-	if (unlikely(!client)) {
-		err("client is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-
-	ret = fimc_is_sensor_write16_array(client, sensor_3l2_init_setfile_burst[0],
-			&sensor_3l2_init_setfile_burst[1], sensor_3l2_init_setfile_burst_size - 1);
-	if (ret < 0) {
-		err("fimc_is_sensor_write16_array fail, ret(%d)", ret);
-		goto p_err;
-	}
-
-p_err:
-	return ret;
-}
-
 /* CIS OPS */
 int sensor_3l2_cis_init(struct v4l2_subdev *subdev)
 {
 	int ret = 0;
 	struct fimc_is_cis *cis;
 	u32 setfile_index = 0;
-	cis_setting_info setinfo;
 #ifdef USE_CAMERA_HW_BIG_DATA
 	struct cam_hw_param *hw_param = NULL;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 #endif
-
+	cis_setting_info setinfo;
 	setinfo.param = NULL;
 	setinfo.return_value = 0;
 
@@ -267,11 +186,11 @@ int sensor_3l2_cis_init(struct v4l2_subdev *subdev)
 	if (ret < 0) {
 #ifdef USE_CAMERA_HW_BIG_DATA
 		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
-		if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
+		if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
 			fimc_is_sec_get_rear_hw_param(&hw_param);
-		else if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
+		else if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
 			fimc_is_sec_get_front_hw_param(&hw_param);
-		if (hw_param)
+		if(hw_param)
 			hw_param->i2c_sensor_err_cnt++;
 #endif
 		err("sensor_3l2_check_rev is fail");
@@ -285,35 +204,11 @@ int sensor_3l2_cis_init(struct v4l2_subdev *subdev)
 
 	sensor_3l2_cis_data_calculation(sensor_3l2_pllinfos[setfile_index], cis->cis_data);
 
-	pr_info("sensor_3l2_cis_init_reg start");
-
-	ret = sensor_3l2_cis_sw_reset(subdev);
-	if (ret < 0) {
-		err("sensor_3l2_cis_sw_reset fail!!");
-		goto p_err;
-	}
-
-	ret = sensor_cis_set_registers(subdev, sensor_3l2_init_setfile_reset,
-			sensor_3l2_init_setfile_reset_size);
-	if (ret < 0) {
-		err("sensor_3l2_set_registers - reset fail!!");
-		goto p_err;
-	}
-
-	ret = sensor_3l2_cis_set_registers_burst(subdev);
-	if (ret < 0) {
-		err("sensor_3l2_set_registers - burst fail!!");
-		goto p_err;
-	}
-
-	ret = sensor_cis_set_registers(subdev, sensor_3l2_init_setfile_other,
-			sensor_3l2_init_setfile_other_size);
-	if (ret < 0) {
-		err("sensor_3l2_set_registers - other fail!!");
-		goto p_err;
-	}
-
-	pr_info("sensor_3l2_cis_init_reg end");
+	/* ARM start */
+	ret = fimc_is_sensor_write16(cis->client, 0xFCFC, 0xD000);
+	ret = fimc_is_sensor_write8(cis->client, 0x6010, 0x1);
+	/* 3ms delay to operate sensor FW */
+	msleep(3);
 
 	setinfo.return_value = 0;
 	CALL_CISOPS(cis, cis_get_min_exposure_time, subdev, &setinfo.return_value);
@@ -348,8 +243,8 @@ int sensor_3l2_cis_log_status(struct v4l2_subdev *subdev)
 	int ret = 0;
 	struct fimc_is_cis *cis;
 	struct i2c_client *client = NULL;
-	u8 data8;
-	u16 data16;
+	u8 data8 = 0;
+	u16 data16 = 0;
 
 	BUG_ON(!subdev);
 
@@ -447,6 +342,29 @@ int sensor_3l2_cis_group_param_hold(struct v4l2_subdev *subdev, bool hold)
 	ret = sensor_3l2_cis_group_param_hold_func(subdev, hold);
 	if (ret < 0)
 		goto p_err;
+
+p_err:
+	return ret;
+}
+
+int sensor_3l2_cis_set_global_setting(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct fimc_is_cis *cis = NULL;
+
+	BUG_ON(!subdev);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!cis);
+
+	/* setfile global setting is at camera entrance */
+	ret = sensor_cis_set_registers(subdev, sensor_3l2_global, sensor_3l2_global_size);
+	if (ret < 0) {
+		err("sensor_3l2_set_registers fail!!");
+		goto p_err;
+	}
+
+	dbg_sensor("[%s] global setting done\n", __func__);
 
 p_err:
 	return ret;
@@ -1271,10 +1189,6 @@ int sensor_3l2_cis_set_analog_gain(struct v4l2_subdev *subdev, struct ae_param *
 	}
 
 	if (analog_gain > cis->cis_data->max_analog_gain[0]) {
-		err("wrong analog gain, input (x%d, %d), max (x%d, %d)",
-			again->val, analog_gain,
-			cis->cis_data->max_analog_gain[1],
-			cis->cis_data->max_analog_gain[0]);
 		analog_gain = cis->cis_data->max_analog_gain[0];
 	}
 
@@ -1509,10 +1423,6 @@ int sensor_3l2_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		long_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (long_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital long gain, input (x%d, %d), max (x%d, %d)\n",
-			dgain->long_val, long_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		long_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1520,10 +1430,6 @@ int sensor_3l2_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		short_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (short_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital short gain, input (x%d, %d), max (x%d, %d)",
-			dgain->short_val, short_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		short_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1536,11 +1442,19 @@ int sensor_3l2_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		goto p_err;
 	}
 
-	dgains[0] = dgains[1] = dgains[2] = dgains[3] = long_gain;
-	/* long_gain gain */
+	dgains[0] = dgains[1] = dgains[2] = dgains[3] = short_gain;
+	/* Short digital gain */
 	ret = fimc_is_sensor_write16_array(client, 0x020E, dgains, 4);
 	if (ret < 0)
 		goto p_err;
+
+	/* Long digital gain */
+	if (cis_data->companion_data.enable_wdr == true) {
+		dgains[0] = dgains[1] = dgains[2] = dgains[3] = long_gain;
+		ret = fimc_is_sensor_write16_array(client, 0x3062, dgains, 4);
+		if (ret < 0)
+			goto p_err;
+	}
 
 #ifdef DEBUG_SENSOR_TIME
 	do_gettimeofday(&end);
@@ -1691,68 +1605,11 @@ int sensor_3l2_cis_get_max_digital_gain(struct v4l2_subdev *subdev, u32 *max_dga
 	return ret;
 }
 
-int sensor_3l2_cis_compensate_gain_for_extremely_br(struct v4l2_subdev *subdev, u32 expo, u32 *again, u32 *dgain)
-{
-	int ret = 0;
-	struct fimc_is_cis *cis;
-	cis_shared_data *cis_data;
-
-	u32 vt_pic_clk_freq_mhz = 0;
-	u32 line_length_pck = 0;
-	u32 min_fine_int = 0;
-	u16 coarse_int = 0;
-	u32 compensated_dgain = 0;
-
-	BUG_ON(!subdev);
-	BUG_ON(!again);
-	BUG_ON(!dgain);
-
-	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
-	if (!cis) {
-		err("cis is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-	cis_data = cis->cis_data;
-
-	vt_pic_clk_freq_mhz = cis_data->pclk / (1000 * 1000);
-	line_length_pck = cis_data->line_length_pck;
-	min_fine_int = cis_data->min_fine_integration_time;
-
-	if (line_length_pck <= 0) {
-		err("[%s] invalid line_length_pck(%d)\n", __func__, line_length_pck);
-		goto p_err;
-	}
-
-	coarse_int = ((expo * vt_pic_clk_freq_mhz) - min_fine_int) / line_length_pck;
-	if (coarse_int < cis_data->min_coarse_integration_time) {
-		dbg_sensor("[MOD:D:%d] %s, vsync_cnt(%d), long coarse(%d) min(%d)\n", cis->id, __func__,
-			cis_data->sen_vsync_count, coarse_int, cis_data->min_coarse_integration_time);
-		coarse_int = cis_data->min_coarse_integration_time;
-	}
-
-	if (coarse_int <= 21) {
-		compensated_dgain = (*dgain * ((expo * vt_pic_clk_freq_mhz) - min_fine_int)) / (line_length_pck * coarse_int);
-
-		if (compensated_dgain < cis_data->min_digital_gain[0]) {
-			compensated_dgain = cis_data->min_digital_gain[0];
-		} else if (compensated_dgain >= cis_data->max_digital_gain[0]) {
-			*again = (*again * ((expo * vt_pic_clk_freq_mhz) - min_fine_int)) / (line_length_pck * coarse_int);
-			compensated_dgain = cis_data->max_digital_gain[0];
-		}
-		*dgain = compensated_dgain;
-
-		dbg_sensor("[%s] exp(%d), again(%d), dgain(%d), coarse_int(%d), compensated_dgain(%d)\n", __func__, expo, *again, *dgain, coarse_int, compensated_dgain);
-	}
-
-p_err:
-	return ret;
-}
-
 static struct fimc_is_cis_ops cis_ops = {
 	.cis_init = sensor_3l2_cis_init,
 	.cis_log_status = sensor_3l2_cis_log_status,
 	.cis_group_param_hold = sensor_3l2_cis_group_param_hold,
+	.cis_set_global_setting = sensor_3l2_cis_set_global_setting,
 	.cis_mode_change = sensor_3l2_cis_mode_change,
 	.cis_set_size = sensor_3l2_cis_set_size,
 	.cis_stream_on = sensor_3l2_cis_stream_on,
@@ -1772,7 +1629,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_get_digital_gain = sensor_3l2_cis_get_digital_gain,
 	.cis_get_min_digital_gain = sensor_3l2_cis_get_min_digital_gain,
 	.cis_get_max_digital_gain = sensor_3l2_cis_get_max_digital_gain,
-	.cis_compensate_gain_for_extremely_br = sensor_3l2_cis_compensate_gain_for_extremely_br,
+	.cis_compensate_gain_for_extremely_br = sensor_cis_compensate_gain_for_extremely_br,
 	.cis_wait_streamoff = sensor_cis_wait_streamoff,
 };
 
@@ -1786,7 +1643,6 @@ int cis_3l2_probe(struct i2c_client *client,
 	struct fimc_is_device_sensor *device = NULL;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 	u32 sensor_id = 0;
-	u32 fnum = 0;
 	char const *setfile;
 	struct device *dev;
 	struct device_node *dnode;
@@ -1853,17 +1709,20 @@ int cis_3l2_probe(struct i2c_client *client,
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
+
+	if (of_property_read_bool(dnode, "sensor_f_number")) {
+		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
+		if (ret) {
+			warn("f-number read is fail(%d)",ret);
+		}
+	} else {
+		cis->aperture_num = F2_2;
+	}
+
+	probe_info("%s f-number %d\n", __func__, cis->aperture_num);
+
 	cis->use_dgain = true;
 	cis->hdr_ctrl_by_again = false;
-
-	ret = of_property_read_u32(dnode, "fnum", &fnum);
-	if (ret) {
-		warn("fnum read is fail(%d), use default f num", ret);
-		cis->aperture_num = F1_9;
-	} else {
-		probe_info("%s f num %d from dt\n", __func__, fnum);
-		cis->aperture_num = fnum;
-	}
 
 	ret = of_property_read_string(dnode, "setfile", &setfile);
 	if (ret) {
@@ -1874,36 +1733,24 @@ int cis_3l2_probe(struct i2c_client *client,
 	if (strcmp(setfile, "default") == 0 ||
 			strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
-		sensor_3l2_init_setfile_reset = sensor_3l2_setfile_A_initial_reset;
-		sensor_3l2_init_setfile_reset_size = sensor_3l2_setfile_A_initial_reset_size;
-		sensor_3l2_init_setfile_burst = sensor_3l2_setfile_A_initial_burst;
-		sensor_3l2_init_setfile_burst_size = sensor_3l2_setfile_A_initial_burst_size;
-		sensor_3l2_init_setfile_other = sensor_3l2_setfile_A_initial_other;
-		sensor_3l2_init_setfile_other_size = sensor_3l2_setfile_A_initial_other_size;
+		sensor_3l2_global = sensor_3l2_setfile_A_Global;
+		sensor_3l2_global_size = sizeof(sensor_3l2_setfile_A_Global) / sizeof(sensor_3l2_setfile_A_Global[0]);
 		sensor_3l2_setfiles = sensor_3l2_setfiles_A;
 		sensor_3l2_setfile_sizes = sensor_3l2_setfile_A_sizes;
 		sensor_3l2_pllinfos = sensor_3l2_pllinfos_A;
 		sensor_3l2_max_setfile_num = sizeof(sensor_3l2_setfiles_A) / sizeof(sensor_3l2_setfiles_A[0]);
 	} else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
-		sensor_3l2_init_setfile_reset = sensor_3l2_setfile_B_initial_reset;
-		sensor_3l2_init_setfile_reset_size = sensor_3l2_setfile_B_initial_reset_size;
-		sensor_3l2_init_setfile_burst = sensor_3l2_setfile_B_initial_burst;
-		sensor_3l2_init_setfile_burst_size = sensor_3l2_setfile_B_initial_burst_size;
-		sensor_3l2_init_setfile_other = sensor_3l2_setfile_B_initial_other;
-		sensor_3l2_init_setfile_other_size = sensor_3l2_setfile_B_initial_other_size;
+		sensor_3l2_global = sensor_3l2_setfile_B_Global;
+		sensor_3l2_global_size = sizeof(sensor_3l2_setfile_B_Global) / sizeof(sensor_3l2_setfile_B_Global[0]);
 		sensor_3l2_setfiles = sensor_3l2_setfiles_B;
 		sensor_3l2_setfile_sizes = sensor_3l2_setfile_B_sizes;
 		sensor_3l2_pllinfos = sensor_3l2_pllinfos_B;
 		sensor_3l2_max_setfile_num = sizeof(sensor_3l2_setfiles_B) / sizeof(sensor_3l2_setfiles_B[0]);
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
-		sensor_3l2_init_setfile_reset = sensor_3l2_setfile_A_initial_reset;
-		sensor_3l2_init_setfile_reset_size = sensor_3l2_setfile_A_initial_reset_size;
-		sensor_3l2_init_setfile_burst = sensor_3l2_setfile_A_initial_burst;
-		sensor_3l2_init_setfile_burst_size = sensor_3l2_setfile_A_initial_burst_size;
-		sensor_3l2_init_setfile_other = sensor_3l2_setfile_A_initial_other;
-		sensor_3l2_init_setfile_other_size = sensor_3l2_setfile_A_initial_other_size;
+		sensor_3l2_global = sensor_3l2_setfile_A_Global;
+		sensor_3l2_global_size = sizeof(sensor_3l2_setfile_A_Global) / sizeof(sensor_3l2_setfile_A_Global[0]);
 		sensor_3l2_setfiles = sensor_3l2_setfiles_A;
 		sensor_3l2_setfile_sizes = sensor_3l2_setfile_A_sizes;
 		sensor_3l2_pllinfos = sensor_3l2_pllinfos_A;

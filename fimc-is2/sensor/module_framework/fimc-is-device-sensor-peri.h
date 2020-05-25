@@ -12,6 +12,11 @@
 #ifndef fimc_is_device_sensor_peri_H
 #define fimc_is_device_sensor_peri_H
 
+#ifdef CONFIG_MUIC_NOTIFIER
+#include <linux/muic/muic.h>
+#include <linux/muic/muic_notifier.h>
+#endif
+
 #include <linux/interrupt.h>
 #include "fimc-is-mem.h"
 #include "fimc-is-param.h"
@@ -32,7 +37,7 @@ struct fimc_is_cis {
 	cis_shared_data			*cis_data;
 	struct fimc_is_cis_ops		*cis_ops;
 	enum otf_input_order		bayer_order;
-	enum apex_aperture_value	aperture_num;
+	u32				aperture_num;
 	bool				use_dgain;
 	bool				hdr_ctrl_by_again;
 
@@ -64,14 +69,6 @@ struct fimc_is_cis {
 	/* get a min, max fps to HAL */
 	u32				min_fps;
 	u32				max_fps;
-	struct mutex			control_lock;
-
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	/* settings for initial AE */
-	bool				use_initial_ae;
-	ae_setting			init_ae_setting;
-	ae_setting			last_ae_setting;
-#endif
 };
 
 struct fimc_is_actuator_data {
@@ -126,6 +123,18 @@ struct fimc_is_flash_data {
 	struct work_struct		flash_fire_work;
 	struct timer_list		flash_expire_timer;
 	struct work_struct		flash_expire_work;
+#ifdef CONFIG_VENDER_MCD
+	u32				flash_current;
+	u32				movie_current;
+	u32				torch_current;
+	u32				factory_current;
+	
+	u32				torch_level1;
+	u32				torch_level2;
+	u32				torch_level3;
+	u32				torch_level4;
+	u32				torch_level5;
+#endif
 };
 
 struct fimc_is_flash {
@@ -139,6 +148,23 @@ struct fimc_is_flash {
 
 	struct fimc_is_flash_data	flash_data;
 	struct fimc_is_flash_expo_gain  flash_ae;
+
+#ifdef CONFIG_CAMERA_FLASH_I2C_OBJ
+	struct notifier_block		flash_noti_ta;
+	int				attach_ta;
+	int				attach_sdp;
+#endif
+};
+
+struct fimc_is_ois {
+	u32				id;
+	u32				device; /* connected sensor device */
+	u32				ois_mode; /* need to mode when ois mode change */
+
+	struct v4l2_subdev		*subdev; /* connected module subdevice */
+	struct i2c_client		*client;
+
+	struct fimc_is_ois_ops		*ois_ops;
 };
 
 /*
@@ -151,9 +177,11 @@ struct fimc_is_preprocessor {
 	struct v4l2_subdev		*subdev; /* connected module subdevice */
 	u32				device; /* connected sensor device */
 	struct i2c_client		*client;
+	struct fimc_is_device_preproc *device_preproc;
 
-	u32					position;
-	u32					max_position;
+	u32				cfgs;
+	const struct fimc_is_companion_cfg	*cfg;
+
 	struct fimc_is_preprocessor_ops	*preprocessor_ops;
 };
 
@@ -172,6 +200,9 @@ struct fimc_is_device_sensor_peri {
 	struct fimc_is_preprocessor			preprocessor;
 	struct v4l2_subdev				*subdev_preprocessor;
 
+	struct fimc_is_ois				ois;
+	struct v4l2_subdev				*subdev_ois;
+
 	unsigned long					peri_state;
 
 	/* Thread for sensor and high spped recording setting */
@@ -186,8 +217,8 @@ struct fimc_is_device_sensor_peri {
 	struct kthread_worker		mode_change_worker;
 	struct kthread_work		mode_change_work;
 
-	/* sensor mode setting flag */
-        u32                             mode_change_flag;
+	/* first sensor mode setting flag */
+        u32                             mode_change_first;
 
 	struct fimc_is_sensor_interface			sensor_interface;
 };
@@ -207,6 +238,8 @@ struct fimc_is_device_sensor_peri *find_peri_by_flash_id(struct fimc_is_device_s
 							u32 flash);
 struct fimc_is_device_sensor_peri *find_peri_by_preprocessor_id(struct fimc_is_device_sensor *device,
 							u32 preprocessor);
+struct fimc_is_device_sensor_peri *find_peri_by_ois_id(struct fimc_is_device_sensor *device,
+							u32 ois);
 
 void fimc_is_sensor_set_cis_uctrl_list(struct fimc_is_device_sensor_peri *sensor_peri,
 		u32 long_exp, u32 short_exp,
@@ -262,5 +295,6 @@ int fimc_is_sensor_mode_change(struct fimc_is_cis *cis, u32 mode);
 
 #define CALL_CISOPS(s, op, args...) (((s)->cis_ops->op) ? ((s)->cis_ops->op(args)) : 0)
 #define CALL_PREPROPOPS(s, op, args...) (((s)->preprocessor_ops->op) ? ((s)->preprocessor_ops->op(args)) : 0)
+#define CALL_OISOPS(s, op, args...) (((s)->ois_ops->op) ? ((s)->ois_ops->op(args)) : 0)
 
 #endif

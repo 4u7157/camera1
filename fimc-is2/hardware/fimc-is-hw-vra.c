@@ -10,6 +10,50 @@
 
 #include "fimc-is-hw-vra.h"
 #include "../interface/fimc-is-interface-ischain.h"
+#include "fimc-is-err.h"
+
+void fimc_is_hw_vra_save_debug_info(struct fimc_is_hw_ip *hw_ip,
+	struct fimc_is_lib_vra *lib_vra, int debug_point)
+{
+	struct fimc_is_hardware *hardware;
+	u32 hw_fcount, index, instance;
+
+	BUG_ON(!hw_ip);
+
+	hardware = hw_ip->hardware;
+	instance = atomic_read(&hw_ip->instance);
+	hw_fcount = atomic_read(&hw_ip->fcount);
+
+	switch (debug_point) {
+	case DEBUG_POINT_FRAME_START:
+		hw_ip->debug_index[1] = hw_ip->debug_index[0] % DEBUG_FRAME_COUNT;
+		index = hw_ip->debug_index[1];
+		hw_ip->debug_info[index].fcount = hw_ip->debug_index[0];
+		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_START] = raw_smp_processor_id();
+		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_START] = cpu_clock(raw_smp_processor_id());
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance]])
+			|| test_bit(VRA_LIB_BYPASS_REQUESTED, &lib_vra->state))
+			info_hw("[ID:%d][F:%d]F.S\n", hw_ip->id, hw_fcount);
+		break;
+	case DEBUG_POINT_FRAME_END:
+		index = hw_ip->debug_index[1];
+		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_END] = raw_smp_processor_id();
+		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_END] = cpu_clock(raw_smp_processor_id());
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance]]))
+			info_hw("[ID:%d][F:%d]F.E\n", hw_ip->id, hw_fcount);
+
+		if (atomic_read(&hw_ip->count.fs) < atomic_read(&hw_ip->count.fe)) {
+			err_hw("[VRA] fs(%d), fe(%d), dma(%d)",
+				atomic_read(&hw_ip->count.fs),
+				atomic_read(&hw_ip->count.fe),
+				atomic_read(&hw_ip->count.dma));
+		}
+		break;
+	default:
+		break;
+	}
+	return;
+}
 
 static int fimc_is_hw_vra_ch0_handle_interrupt(u32 id, void *context)
 {
@@ -18,7 +62,7 @@ static int fimc_is_hw_vra_ch0_handle_interrupt(u32 id, void *context)
 	struct fimc_is_hw_ip *hw_ip = NULL;
 	struct fimc_is_hw_vra *hw_vra = NULL;
 	struct fimc_is_lib_vra *lib_vra;
-	u32 hw_fcount, index;
+	u32 hw_fcount;
 
 	BUG_ON(!context);
 	hw_ip = (struct fimc_is_hw_ip *)context;
@@ -61,23 +105,12 @@ static int fimc_is_hw_vra_ch0_handle_interrupt(u32 id, void *context)
 			/* CLOCK OFF */
 			CALL_HW_OPS(hw_ip, clk_gate, 0, false, false);
 		}
-		index = hw_ip->debug_index[1];
-		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_END] = raw_smp_processor_id();
-		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_END] = cpu_clock(raw_smp_processor_id());
-		if (!atomic_read(&hw_ip->hardware->stream_on))
-			info_hw("[ID:%d][F:%d]F.E\n", hw_ip->id, hw_fcount);
-
 		atomic_set(&hw_ip->status.Vvalid, V_BLANK);
 		atomic_inc(&hw_ip->count.fe);
-		if (atomic_read(&hw_ip->count.fs) < atomic_read(&hw_ip->count.fe)) {
-			err_hw("[VRA] fs(%d), fe(%d), dma(%d)",
-				atomic_read(&hw_ip->count.fs),
-				atomic_read(&hw_ip->count.fe),
-				atomic_read(&hw_ip->count.dma));
-		}
+		fimc_is_hw_vra_save_debug_info(hw_ip, lib_vra, DEBUG_POINT_FRAME_END);
 #if !defined(VRA_DMA_TEST_BY_IMAGE)
 		fimc_is_hardware_frame_done(hw_ip, NULL, -1,
-			FIMC_IS_HW_CORE_END, 0, FRAME_DONE_NORMAL);
+			FIMC_IS_HW_CORE_END, IS_SHOT_SUCCESS);
 #endif
 		wake_up(&hw_ip->status.wait_queue);
 	}
@@ -86,15 +119,7 @@ static int fimc_is_hw_vra_ch0_handle_interrupt(u32 id, void *context)
 		status &= (~(1 << CH0INT_CIN_FR_ST));
 		dbg_hw("hw_vra[ch0]: CIN_FR_ST\n");
 		atomic_inc(&hw_ip->count.fs);
-		hw_ip->debug_index[1] = hw_ip->debug_index[0] % DEBUG_FRAME_COUNT;
-		index = hw_ip->debug_index[1];
-		hw_ip->debug_info[index].fcount = hw_ip->debug_index[0];
-		hw_ip->debug_info[index].cpuid[DEBUG_POINT_FRAME_START] = raw_smp_processor_id();
-		hw_ip->debug_info[index].time[DEBUG_POINT_FRAME_START] = cpu_clock(raw_smp_processor_id());
-		if (!atomic_read(&hw_ip->hardware->stream_on)
-			|| test_bit(VRA_LIB_BYPASS_REQUESTED, &lib_vra->state))
-			info_hw("[ID:%d][F:%d]F.S\n", hw_ip->id, hw_fcount);
-
+		fimc_is_hw_vra_save_debug_info(hw_ip, lib_vra, DEBUG_POINT_FRAME_START);
 		atomic_set(&hw_ip->status.Vvalid, V_VALID);
 		clear_bit(HW_CONFIG, &hw_ip->state);
 	}
@@ -109,12 +134,22 @@ static int fimc_is_hw_vra_ch1_handle_interrupt(u32 id, void *context)
 {
 	int ret = 0;
 	u32 status, intr_mask, intr_status;
+	struct fimc_is_hardware *hardware;
 	struct fimc_is_hw_ip *hw_ip = NULL;
 	struct fimc_is_hw_vra *hw_vra = NULL;
 	struct fimc_is_lib_vra *lib_vra;
+	u32 instance;
+	bool has_vra_ch1_only = false;
+	u32 ch1_mode;
+	u32 hw_fcount;
 
 	BUG_ON(!context);
 	hw_ip = (struct fimc_is_hw_ip *)context;
+	hardware = hw_ip->hardware;
+	instance = atomic_read(&hw_ip->instance);
+	hw_fcount = atomic_read(&hw_ip->fcount);
+
+	ret = fimc_is_hw_g_ctrl(NULL, 0, HW_G_CTRL_HAS_VRA_CH1_ONLY, (void *)&has_vra_ch1_only);
 
 	BUG_ON(!hw_ip->priv_info);
 	hw_vra = (struct fimc_is_hw_vra *)hw_ip->priv_info;
@@ -124,6 +159,7 @@ static int fimc_is_hw_vra_ch1_handle_interrupt(u32 id, void *context)
 	}
 	lib_vra = &hw_vra->lib_vra;
 
+	ch1_mode = fimc_is_vra_chain1_get_image_mode(hw_ip->regs);
 	intr_status = fimc_is_vra_chain1_get_status_intr(hw_ip->regs);
 	intr_mask   = fimc_is_vra_chain1_get_enable_intr(hw_ip->regs);
 	status = (intr_mask) & intr_status;
@@ -137,15 +173,47 @@ static int fimc_is_hw_vra_ch1_handle_interrupt(u32 id, void *context)
 			ret, intr_status, intr_mask, status, atomic_read(&hw_vra->ch1_count));
 	}
 
+	if (status & (1 << CH1INT_IN_START_OF_CONTEXT)) {
+		status &= (~(1 << CH1INT_IN_START_OF_CONTEXT));
+		dbg_hw("hw_vra[ch1]: START_OF_CONTEXT\n");
+		if (has_vra_ch1_only) {
+			if (test_bit(HW_VRA_CH1_START, &hw_ip->state)) {
+				clear_bit(HW_VRA_CH1_START, &hw_ip->state);
+				fimc_is_hardware_frame_start(hw_ip, instance);
+
+				atomic_inc(&hw_ip->count.fs);
+				fimc_is_hw_vra_save_debug_info(hw_ip, lib_vra, DEBUG_POINT_FRAME_START);
+				atomic_set(&hw_ip->status.Vvalid, V_VALID);
+				clear_bit(HW_CONFIG, &hw_ip->state);
+			}
+		}
+	}
+
 	if (status & (1 << CH1INT_IN_END_OF_CONTEXT)) {
 		status &= (~(1 << CH1INT_IN_END_OF_CONTEXT));
-		if (!atomic_read(&hw_ip->hardware->stream_on)
+		if (!atomic_read(&hardware->streaming[hardware->sensor_position[instance]])
 			|| test_bit(VRA_LIB_BYPASS_REQUESTED, &lib_vra->state))
 			info_hw("hw_vra[ch1]: END_OF_CONTEXT [F:%d](%d)\n",
 				atomic_read(&hw_ip->fcount),
 				(atomic_read(&hw_vra->ch1_count) % 4));
 		atomic_inc(&hw_ip->count.dma);
 		atomic_inc(&hw_vra->ch1_count);
+
+		dbg_hw("hw_vra[ch1]: END_OF_CONTEXT\n");
+		if (has_vra_ch1_only && (ch1_mode == VRA_CH1_DETECT_MODE)) {
+			/* detect mode */
+			set_bit(HW_VRA_CH1_START, &hw_ip->state);
+
+			atomic_set(&hw_ip->status.Vvalid, V_BLANK);
+			atomic_inc(&hw_ip->count.fe);
+			fimc_is_hw_vra_save_debug_info(hw_ip, lib_vra, DEBUG_POINT_FRAME_END);
+			fimc_is_hardware_frame_done(hw_ip, NULL, -1,
+				FIMC_IS_HW_CORE_END, IS_SHOT_SUCCESS);
+			wake_up(&hw_ip->status.wait_queue);
+
+			/* CLOCK OFF */
+			CALL_HW_OPS(hw_ip, clk_gate, instance, false, false);
+		}
 	}
 
 	if (status)
@@ -176,6 +244,7 @@ int fimc_is_hw_vra_probe(struct fimc_is_hw_ip *hw_ip, struct fimc_is_interface *
 {
 	int ret = 0;
 	int hw_slot = -1;
+	bool has_vra_ch1_only = false;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!itf);
@@ -188,7 +257,7 @@ int fimc_is_hw_vra_probe(struct fimc_is_hw_ip *hw_ip, struct fimc_is_interface *
 	hw_ip->itfc = itfc;
 	atomic_set(&hw_ip->fcount, 0);
 	hw_ip->internal_fcount = 0;
-	hw_ip->is_leader = false;
+	hw_ip->is_leader = true;
 	atomic_set(&hw_ip->status.Vvalid, V_BLANK);
 	atomic_set(&hw_ip->rsccount, 0);
 	init_waitqueue_head(&hw_ip->status.wait_queue);
@@ -201,7 +270,10 @@ int fimc_is_hw_vra_probe(struct fimc_is_hw_ip *hw_ip, struct fimc_is_interface *
 	}
 
 	/* set vra interrupt handler */
-	itfc->itf_ip[hw_slot].handler[INTR_HWIP1].handler = &fimc_is_hw_vra_ch0_handle_interrupt;
+	ret = fimc_is_hw_g_ctrl(NULL, 0, HW_G_CTRL_HAS_VRA_CH1_ONLY, (void *)&has_vra_ch1_only);
+
+	if (!has_vra_ch1_only)
+		itfc->itf_ip[hw_slot].handler[INTR_HWIP1].handler = &fimc_is_hw_vra_ch0_handle_interrupt;
 	itfc->itf_ip[hw_slot].handler[INTR_HWIP2].handler = &fimc_is_hw_vra_ch1_handle_interrupt;
 
 	clear_bit(HW_OPEN, &hw_ip->state);
@@ -226,6 +298,11 @@ int fimc_is_hw_vra_open(struct fimc_is_hw_ip *hw_ip, u32 instance, u32 *size)
 
 	*size = sizeof(struct fimc_is_hw_vra);
 
+	frame_manager_probe(hw_ip->framemgr, FRAMEMGR_ID_HW | hw_ip->id);
+	frame_manager_open(hw_ip->framemgr, FIMC_IS_MAX_HW_FRAME);
+	frame_manager_probe(hw_ip->framemgr_late, FRAMEMGR_ID_HW | hw_ip->id | 0xF0);
+	frame_manager_open(hw_ip->framemgr_late, FIMC_IS_MAX_HW_FRAME_LATE);
+
 	fimc_is_lib_vra_os_funcs();
 
 	return ret;
@@ -249,7 +326,6 @@ int fimc_is_hw_vra_init(struct fimc_is_hw_ip *hw_ip,
 	hw_vra = (struct fimc_is_hw_vra *)hw_ip->priv_info;
 	lib_vra = &hw_vra->lib_vra;
 	instance = group->instance;
-	hw_ip->group[instance] = group;
 
 	if (test_bit(HW_INIT, &hw_ip->state)) {
 		dbg_hw("[%d]vra is already created (%d)\n", instance, hw_ip->id);
@@ -265,10 +341,7 @@ int fimc_is_hw_vra_init(struct fimc_is_hw_ip *hw_ip,
 #else
 	get_lib_vra_func((void *)&hw_vra->lib_vra.itf_func);
 #endif
-	if (ret) {
-		err_hw("[%d]get_lib_vra_func is fail (%d)", instance, hw_ip->id);
-		return ret;
-	}
+	dbg_hw("[%d]get_lib_vra_func done (%d)", instance, hw_ip->id);
 
 	dma_addr = hw_ip->group[instance]->device->minfo->kvaddr_vra;
 	ret = fimc_is_lib_vra_alloc_memory(&hw_vra->lib_vra, dma_addr);
@@ -334,6 +407,9 @@ int fimc_is_hw_vra_close(struct fimc_is_hw_ip *hw_ip, u32 instance)
 		return ret;
 	}
 
+	frame_manager_close(hw_ip->framemgr);
+	frame_manager_close(hw_ip->framemgr_late);
+
 	info_hw("[%d]close (%d)(%d)\n", instance, hw_ip->id, atomic_read(&hw_ip->rsccount));
 
 	return ret;
@@ -355,6 +431,7 @@ int fimc_is_hw_vra_enable(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	}
 
 	set_bit(HW_RUN, &hw_ip->state);
+	set_bit(HW_VRA_CH1_START, &hw_ip->state);
 
 	return ret;
 }
@@ -416,11 +493,13 @@ int fimc_is_hw_vra_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame
 	ulong hw_map)
 {
 	int ret = 0;
+	struct fimc_is_group *head;
 	struct fimc_is_hw_vra *hw_vra = NULL;
 	struct vra_param *param;
 	struct fimc_is_lib_vra *lib_vra;
-	unsigned char *buffer = NULL;
 	u32 instance, lindex, hindex;
+	unsigned char *buffer_kva = NULL;
+	unsigned char *buffer_dva = NULL;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!frame);
@@ -471,12 +550,28 @@ int fimc_is_hw_vra_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame
 #endif
 
 new_frame:
+	head = hw_ip->group[frame->instance]->head;
+
 	if (param->control.cmd == CONTROL_COMMAND_STOP) {
 		if (!test_bit(VRA_LIB_FWALGS_ABORT, &lib_vra->state)) {
-			info_hw("[%d]shot: VRA_LIB_BYPASS_REQUESTED [F:%d](%d)\n",
-				instance, frame->fcount, param->control.cmd);
-			set_bit(VRA_LIB_BYPASS_REQUESTED, &lib_vra->state);
+			if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &head->state)) {
+				info_hw("[%d]shot: VRA_LIB_BYPASS_REQUESTED [F:%d](%d)\n",
+					instance, frame->fcount, param->control.cmd);
+				set_bit(VRA_LIB_BYPASS_REQUESTED, &lib_vra->state);
+			} else {
+				info_hw("[%d]shot: lib_vra_stop [F:%d](%d)\n",
+					instance, frame->fcount, param->control.cmd);
+				ret = fimc_is_lib_vra_stop(lib_vra);
+				if (ret)
+					err_hw("lib_vra_stop is fail (%d)", ret);
+
+				atomic_set(&hw_vra->ch1_count, 0);
+
+				/* CLOCK OFF */
+				CALL_HW_OPS(hw_ip, clk_gate, 0, false, false);
+			}
 		}
+
 		return ret;
 	}
 	/*
@@ -484,8 +579,13 @@ new_frame:
 	 * DMA mode: the buffer value is VRA input DMA address.
 	 * ToDo: DMA input buffer set by buffer hiding
 	 */
+	/* Add for CH1 DMA input */
+	if (lib_vra->fr_work_init.dram_input) {
+		buffer_kva = (unsigned char *)(frame->kvaddr_buffer[0]);
+		buffer_dva = (unsigned char *)(u64)(frame->dvaddr_buffer[0]);
+	}
 	dbg_hw("[%d]lib_vra_new_frame [F:%d]\n", instance, frame->fcount);
-	ret = fimc_is_lib_vra_new_frame(lib_vra, buffer, instance);
+	ret = fimc_is_lib_vra_new_frame(lib_vra, buffer_kva, buffer_dva, instance);
 	if (ret) {
 		err_hw("[%d]lib_vra_new_frame is fail (%d)", instance, ret);
 		info_hw("count[ID:%d]fs(%d), fe(%d), dma(%d)", hw_ip->id,
@@ -611,35 +711,29 @@ int fimc_is_hw_vra_update_param(struct fimc_is_hw_ip *hw_ip,
 }
 
 int fimc_is_hw_vra_frame_ndone(struct fimc_is_hw_ip *hw_ip,
-	struct fimc_is_frame *frame, u32 instance, bool late_flag)
+	struct fimc_is_frame *frame, u32 instance, enum ShotErrorType done_type)
 {
 	int ret = 0;
 	int wq_id;
 	int output_id;
-	enum fimc_is_frame_done_type done_type;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!frame);
-
-	if (late_flag == true)
-		done_type = FRAME_DONE_LATE_SHOT;
-	else
-		done_type = FRAME_DONE_FORCE;
 
 	wq_id     = -1;
 	output_id = FIMC_IS_HW_CORE_END;
 	if (test_bit_variables(hw_ip->id, &frame->core_flag))
 		ret = fimc_is_hardware_frame_done(hw_ip, frame, wq_id, output_id,
-				1, done_type);
+				done_type);
 
 	return ret;
 }
 
-int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, u32 index,
 	u32 instance, ulong hw_map)
 {
 	struct fimc_is_hw_vra *hw_vra = NULL;
-	struct fimc_is_setfile_info *info;
+	struct fimc_is_hw_ip_setfile *info;
 
 	BUG_ON(!hw_ip);
 
@@ -658,9 +752,9 @@ int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 		return -EINVAL;
 	}
 	hw_vra = (struct fimc_is_hw_vra *)hw_ip->priv_info;
-	info = &hw_ip->setfile_info;
+	info = &hw_ip->setfile;
 
-	switch (hw_ip->setfile_info.version) {
+	switch (hw_ip->setfile.version) {
 	case SETFILE_V2:
 		break;
 	case SETFILE_V3:
@@ -677,11 +771,11 @@ int fimc_is_hw_vra_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 	return 0;
 }
 
-int fimc_is_hw_vra_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_vra_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenario,
 	u32 instance, ulong hw_map)
 {
 	struct fimc_is_hw_vra_setfile *setfile;
-	struct fimc_is_setfile_info *info;
+	struct fimc_is_hw_ip_setfile *info;
 	struct fimc_is_hw_vra *hw_vra;
 	struct fimc_is_lib_vra *lib_vra;
 	struct fimc_is_lib_vra_tune_data tune;
@@ -707,13 +801,19 @@ int fimc_is_hw_vra_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 		return -EINVAL;
 	}
 
-	info    = &hw_ip->setfile_info;
+	info    = &hw_ip->setfile;
 	lib_vra = &hw_vra->lib_vra;
 	clear_bit(VRA_LIB_APPLY_TUNE_SET, &lib_vra->state);
 
-	setfile_index = info->index[index];
+	setfile_index = info->index[scenario];
+	if (setfile_index >= hw_ip->setfile.using_count) {
+		err_hw("[%d][ID:%d] setfile index is out-of-range, [%d:%d]",
+				instance, hw_ip->id, scenario, setfile_index);
+		return -EINVAL;
+	}
+
 	info_hw("[%d][ID:%d] setfile (%d) scenario (%d)\n", instance, hw_ip->id,
-		setfile_index, index);
+		setfile_index, scenario);
 
 	hw_vra->setfile = *(struct fimc_is_hw_vra_setfile *)info->table[setfile_index].addr;
 	setfile = &hw_vra->setfile;
@@ -772,10 +872,15 @@ int fimc_is_hw_vra_delete_setfile(struct fimc_is_hw_ip *hw_ip, u32 instance,
 void fimc_is_hw_vra_reset(struct fimc_is_hw_ip *hw_ip)
 {
 	u32 all_intr;
+	bool has_vra_ch1_only = false;
+	int ret = 0;
 
 	/* Interrupt clear */
-	all_intr = fimc_is_vra_chain0_get_all_intr(hw_ip->regs);
-	fimc_is_vra_chain0_set_clear_intr(hw_ip->regs, all_intr);
+	ret = fimc_is_hw_g_ctrl(NULL, 0, HW_G_CTRL_HAS_VRA_CH1_ONLY, (void *)&has_vra_ch1_only);
+	if(!has_vra_ch1_only) {
+		all_intr = fimc_is_vra_chain0_get_all_intr(hw_ip->regs);
+		fimc_is_vra_chain0_set_clear_intr(hw_ip->regs, all_intr);
+	}
 
 	all_intr = fimc_is_vra_chain1_get_all_intr(hw_ip->regs);
 	fimc_is_vra_chain1_set_clear_intr(hw_ip->regs, all_intr);
@@ -801,7 +906,7 @@ int fimc_is_hw_vra_get_meta(struct fimc_is_hw_ip *hw_ip,
 		return -EINVAL;
 	}
 
-	ret = fimc_is_lib_vra_get_meta(&hw_vra->lib_vra, frame);
+	ret = fimc_is_lib_vra_get_meta(&hw_vra->lib_vra, frame->shot);
 	if (ret)
 		err_hw("[%d]lib_vra_get_meta is fail (%d)", frame->instance, ret);
 

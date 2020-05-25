@@ -415,6 +415,8 @@ static int fimc_is_ssxvc2_video_prepare(struct file *file, void *priv,
 	struct fimc_is_device_sensor *device;
 	struct fimc_is_framemgr *framemgr;
 	struct fimc_is_frame *frame;
+	struct fimc_is_subdev *subdev;
+	struct vb2_buffer *vb;
 
 	BUG_ON(!buf);
 	BUG_ON(!vctx);
@@ -434,6 +436,25 @@ static int fimc_is_ssxvc2_video_prepare(struct file *file, void *priv,
 	if (ret) {
 		merr("fimc_is_video_prepare is fail(%d)", vctx, ret);
 		goto p_err;
+	}
+
+	/*
+	 * HACK:
+	 * when a buffer be prepared, we can use it as a DMA buffer
+	 * for this channel specially
+	 */
+	subdev = &device->ssvc2;
+	vb = container_of(buf, struct vb2_buffer, v4l2_buf);
+	ret = fimc_is_subdev_buffer_queue(subdev, vb->v4l2_buf.index);
+	if (ret) {
+		merr("fimc_is_subdev_buffer_queue is fail(%d)", device, ret);
+		return ret;
+	}
+
+	ret = fimc_is_sensor_subdev_buffer_queue(device, ENTRY_SSVC2, vb->v4l2_buf.index);
+	if (ret) {
+		merr("fimc_is_sensor_subdev_buffer_queue is fail(%d)", device, ret);
+		return ret;
 	}
 
 p_err:
@@ -710,11 +731,13 @@ static void fimc_is_ssxvc2_buffer_queue(struct vb2_buffer *vb)
 		return;
 	}
 
+#if !defined(CONFIG_USE_SENSOR_GROUP)
 	ret = fimc_is_sensor_subdev_buffer_queue(device, ENTRY_SSVC2, vb->v4l2_buf.index);
 	if (ret) {
 		merr("fimc_is_sensor_subdev_buffer_queue is fail(%d)", device, ret);
 		return;
 	}
+#endif
 }
 
 static void fimc_is_ssxvc2_buffer_finish(struct vb2_buffer *vb)
@@ -743,6 +766,7 @@ static void fimc_is_ssxvc2_buffer_finish(struct vb2_buffer *vb)
 
 const struct vb2_ops fimc_is_ssxvc2_qops = {
 	.queue_setup		= fimc_is_ssxvc2_queue_setup,
+	.buf_init		= fimc_is_buffer_init,
 	.buf_prepare		= fimc_is_ssxvc2_buffer_prepare,
 	.buf_queue		= fimc_is_ssxvc2_buffer_queue,
 	.buf_finish		= fimc_is_ssxvc2_buffer_finish,

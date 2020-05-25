@@ -47,6 +47,8 @@
 
 static const struct v4l2_subdev_ops subdev_ops;
 
+static const u32 *sensor_4h5yc_global;
+static u32 sensor_4h5yc_global_size;
 static const u32 **sensor_4h5yc_setfiles;
 static const u32 *sensor_4h5yc_setfile_sizes;
 static const struct sensor_pll_info **sensor_4h5yc_pllinfos;
@@ -195,8 +197,7 @@ int sensor_4h5yc_cis_init(struct v4l2_subdev *subdev)
 #endif
 		warn("sensor_4h5yc_check_rev is fail when cis init");
 		cis->rev_flag = true;
-		ret = -EINVAL;
-		goto p_err;
+		ret = 0;
 	}
 
 	cis->cis_data->cur_width = SENSOR_4H5YC_MAX_WIDTH;
@@ -338,6 +339,30 @@ int sensor_4h5yc_cis_group_param_hold(struct v4l2_subdev *subdev, bool hold)
 	ret = sensor_4h5yc_cis_group_param_hold_func(subdev, hold);
 	if (ret < 0)
 		goto p_err;
+
+p_err:
+	return ret;
+}
+
+int sensor_4h5yc_cis_set_global_setting(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct fimc_is_cis *cis = NULL;
+
+	BUG_ON(!subdev);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!cis);
+
+	/* setfile global setting is at camera entrance */
+	ret = sensor_cis_set_registers(subdev, sensor_4h5yc_global, sensor_4h5yc_global_size);
+
+	if (ret < 0) {
+		err("sensor_4h5yc_set_registers fail!!");
+		goto p_err;
+	}
+
+	dbg_sensor("[%s] global setting done\n", __func__);
 
 p_err:
 	return ret;
@@ -671,7 +696,7 @@ int sensor_4h5yc_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_par
 	u16 long_coarse_int = 0;
 	u16 short_coarse_int = 0;
 	u32 line_length_pck = 0;
-	u32 min_fine_int = 0;
+	u32 fine_int = 0;
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -707,10 +732,10 @@ int sensor_4h5yc_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_par
 
 	vt_pic_clk_freq_mhz = cis_data->pclk / (1000 * 1000);
 	line_length_pck = cis_data->line_length_pck;
-	min_fine_int = cis_data->min_fine_integration_time;
+	fine_int = line_length_pck - 0xf0;
 
-	long_coarse_int = ((target_exposure->long_val * vt_pic_clk_freq_mhz) - min_fine_int) / line_length_pck;
-	short_coarse_int = ((target_exposure->short_val * vt_pic_clk_freq_mhz) - min_fine_int) / line_length_pck;
+	long_coarse_int = ((target_exposure->long_val * vt_pic_clk_freq_mhz) - fine_int) / line_length_pck;
+	short_coarse_int = ((target_exposure->short_val * vt_pic_clk_freq_mhz) - fine_int) / line_length_pck;
 
 	if (long_coarse_int > cis_data->max_coarse_integration_time) {
 		dbg_sensor("[MOD:D:%d] %s, vsync_cnt(%d), long coarse(%d) max(%d)\n", cis->id, __func__,
@@ -742,18 +767,17 @@ int sensor_4h5yc_cis_set_exposure_time(struct v4l2_subdev *subdev, struct ae_par
 		goto p_err;
 	}
 
-/*	ret = fimc_is_sensor_write16(client, 0x0200, (u16)(fine_int & 0xFFFF));
+	ret = fimc_is_sensor_write16(client, 0x0200, (u16)(fine_int & 0xFFFF));
 	if (ret < 0)
 		goto p_err;
-*/
 
 	/* Short exposure */
 	ret = fimc_is_sensor_write16(client, 0x0202, short_coarse_int);
 	if (ret < 0)
 		goto p_err;
 
-/*	dbg_sensor("[MOD:D:%d] %s, vsync_cnt(%d), vt_pic_clk_freq_mhz (%d), line_length_pck(%d), fine_int (%d)\n", cis->id, __func__,
-		cis_data->sen_vsync_count, vt_pic_clk_freq_mhz, line_length_pck, fine_int);*/
+	dbg_sensor("[MOD:D:%d] %s, vsync_cnt(%d), vt_pic_clk_freq_mhz (%d), line_length_pck(%d), fine_int (%d)\n", cis->id, __func__,
+		cis_data->sen_vsync_count, vt_pic_clk_freq_mhz, line_length_pck, fine_int);
 	dbg_sensor("[MOD:D:%d] %s, vsync_cnt(%d), frame_length_lines(%#x), long_coarse_int %#x, short_coarse_int %#x\n", cis->id, __func__,
 		cis_data->sen_vsync_count, cis_data->frame_length_lines, long_coarse_int, short_coarse_int);
 
@@ -1665,6 +1689,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_init = sensor_4h5yc_cis_init,
 	.cis_log_status = sensor_4h5yc_cis_log_status,
 	.cis_group_param_hold = sensor_4h5yc_cis_group_param_hold,
+	.cis_set_global_setting = sensor_4h5yc_cis_set_global_setting,
 	.cis_mode_change = sensor_4h5yc_cis_mode_change,
 	.cis_set_size = sensor_4h5yc_cis_set_size,
 	.cis_stream_on = sensor_4h5yc_cis_stream_on,
@@ -1686,9 +1711,6 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_get_max_digital_gain = sensor_4h5yc_cis_get_max_digital_gain,
 	.cis_compensate_gain_for_extremely_br = sensor_4h5yc_cis_compensate_gain_for_extremely_br,
 	.cis_wait_streamoff = sensor_cis_wait_streamoff,
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	.cis_set_initial_exposure = sensor_cis_set_initial_exposure,
-#endif
 };
 
 int cis_4h5yc_probe(struct i2c_client *client,
@@ -1701,7 +1723,6 @@ int cis_4h5yc_probe(struct i2c_client *client,
 	struct fimc_is_device_sensor *device = NULL;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 	u32 sensor_id = 0;
-	u32 fnum = 0;
 	char const *setfile;
 	struct device *dev;
 	struct device_node *dnode;
@@ -1765,18 +1786,20 @@ int cis_4h5yc_probe(struct i2c_client *client,
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
-	cis->aperture_num = F2_2;
+
+	if (of_property_read_bool(dnode, "sensor_f_number")) {
+		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
+		if (ret) {
+			warn("f-number read is fail(%d)",ret);
+		}
+	} else {
+		cis->aperture_num = F2_2;
+	}
+
+	probe_info("%s f-number %d\n", __func__, cis->aperture_num);
+
 	cis->use_dgain = true;
 	cis->hdr_ctrl_by_again = false;
-
-	ret = of_property_read_u32(dnode, "fnum", &fnum);
-	if (ret) {
-		warn("fnum read is fail(%d), use default f num", ret);
-		cis->aperture_num = F2_2;
-	} else {
-		probe_info("%s f num %d from dt\n", __func__, fnum);
-		cis->aperture_num = fnum;
-	}
 
 	ret = of_property_read_string(dnode, "setfile", &setfile);
 	if (ret) {
@@ -1787,28 +1810,29 @@ int cis_4h5yc_probe(struct i2c_client *client,
 	if (strcmp(setfile, "default") == 0 ||
 			strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
+		sensor_4h5yc_global = sensor_4h5yc_setfile_A_Global;
+		sensor_4h5yc_global_size = sizeof(sensor_4h5yc_setfile_A_Global) / sizeof(sensor_4h5yc_setfile_A_Global[0]);
 		sensor_4h5yc_setfiles = sensor_4h5yc_setfiles_A;
 		sensor_4h5yc_setfile_sizes = sensor_4h5yc_setfile_A_sizes;
 		sensor_4h5yc_pllinfos = sensor_4h5yc_pllinfos_A;
 		sensor_4h5yc_max_setfile_num = sizeof(sensor_4h5yc_setfiles_A) / sizeof(sensor_4h5yc_setfiles_A[0]);
 	} else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
+		sensor_4h5yc_global = sensor_4h5yc_setfile_B_Global;
+		sensor_4h5yc_global_size = sizeof(sensor_4h5yc_setfile_B_Global) / sizeof(sensor_4h5yc_setfile_B_Global[0]);
 		sensor_4h5yc_setfiles = sensor_4h5yc_setfiles_B;
 		sensor_4h5yc_setfile_sizes = sensor_4h5yc_setfile_B_sizes;
 		sensor_4h5yc_pllinfos = sensor_4h5yc_pllinfos_B;
 		sensor_4h5yc_max_setfile_num = sizeof(sensor_4h5yc_setfiles_B) / sizeof(sensor_4h5yc_setfiles_B[0]);
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
+		sensor_4h5yc_global = sensor_4h5yc_setfile_A_Global;
+		sensor_4h5yc_global_size = sizeof(sensor_4h5yc_setfile_A_Global) / sizeof(sensor_4h5yc_setfile_A_Global[0]);
 		sensor_4h5yc_setfiles = sensor_4h5yc_setfiles_A;
 		sensor_4h5yc_setfile_sizes = sensor_4h5yc_setfile_A_sizes;
 		sensor_4h5yc_pllinfos = sensor_4h5yc_pllinfos_A;
 		sensor_4h5yc_max_setfile_num = sizeof(sensor_4h5yc_setfiles_A) / sizeof(sensor_4h5yc_setfiles_A[0]);
 	}
-
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	cis->use_initial_ae = of_property_read_bool(dnode, "use_initial_ae");
-	probe_info("%s use initial_ae(%d)\n", __func__, cis->use_initial_ae);
-#endif
 
 	v4l2_i2c_subdev_init(subdev_cis, client, &subdev_ops);
 	v4l2_set_subdevdata(subdev_cis, cis);

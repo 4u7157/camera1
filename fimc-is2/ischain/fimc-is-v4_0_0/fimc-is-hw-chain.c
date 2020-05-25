@@ -856,52 +856,70 @@ int fimc_is_hw_request_irq(void *itfc_data, int hw_id)
 	return ret;
 }
 
-int fimc_is_hw_set_fullbypass(void *itfc_data, int hw_id, bool bypass)
+int fimc_is_hw_s_ctrl(void *itfc_data, int hw_id, enum hw_s_ctrl_id id, void *val)
 {
-	struct fimc_is_interface_ischain *itfc = NULL;
-	u32 values = 0;
+	int ret = 0;
 
-	BUG_ON(!itfc_data);
+	switch (id) {
+	case HW_S_CTRL_FULL_BYPASS:
+		{
+			struct fimc_is_interface_ischain *itfc = NULL;
+			unsigned long bypass = (unsigned long)val;
+			u32 values = 0;
 
-	itfc = (struct fimc_is_interface_ischain *)itfc_data;
-	switch (hw_id) {
-	case DEV_HW_TPU:
-		values = readl(itfc->regs_mcuctl + MCUCTLR);
-		if (bypass)
-			values |= MCUCTLR_TPU_HW_BYPASS(1);
-		else
-			values &= ~MCUCTLR_TPU_HW_BYPASS(1);
-		writel(values, itfc->regs_mcuctl + MCUCTLR);
-		info_itfc("[ID:%d] Full bypass set (%d)", hw_id, (int)bypass);
+			BUG_ON(!itfc_data);
+
+			itfc = (struct fimc_is_interface_ischain *)itfc_data;
+			switch (hw_id) {
+			case DEV_HW_TPU:
+				values = readl(itfc->regs_mcuctl + MCUCTLR);
+				if (bypass)
+					values |= MCUCTLR_TPU_HW_BYPASS(1);
+				else
+					values &= ~MCUCTLR_TPU_HW_BYPASS(1);
+				writel(values, itfc->regs_mcuctl + MCUCTLR);
+				info_itfc("[ID:%d] Full bypass set (%lu)", hw_id, bypass);
+				break;
+			default:
+				err_itfc("[ID:%d] request_irq [2] fail", hw_id);
+				ret = -EINVAL;
+			}
+		}
+		break;
+	case HW_S_CTRL_CHAIN_IRQ:
+		{
+			struct fimc_is_interface *itf = NULL;
+
+			BUG_ON(!itfc_data);
+
+			itf = (struct fimc_is_interface *)itfc_data;
+
+			writel(0x7fff, itf->regs + INTMR2);
+		}
 		break;
 	default:
-		err_itfc("[ID:%d] request_irq [2] fail", hw_id);
-		return -EINVAL;
+		break;
 	}
 
-	return 0;
+	return ret;
 }
 
-int fimc_is_hw_set_chain_interrupt(void *itfc_data)
+int fimc_is_hw_g_ctrl(void *itfc_data, int hw_id, enum hw_g_ctrl_id id, void *val)
 {
-	struct fimc_is_interface *itf = NULL;
+	int ret = 0;
 
-	BUG_ON(!itfc_data);
+	switch (id) {
+	case HW_G_CTRL_FRM_DONE_WITH_DMA:
+		*(bool *)val = true;
+		break;
+	case HW_G_CTRL_HAS_MCSC:
+		*(bool *)val = false;
+		break;
+	case HW_G_CTRL_HAS_VRA_CH1_ONLY:
+		*(bool *)val = false;
+		break;
+	}
 
-	itf = (struct fimc_is_interface *)itfc_data;
-
-	writel(0x7fff, itf->regs + INTMR2);
-
-	return 0;
-}
-
-bool fimc_is_has_mcsc(void)
-{
-	return false;
-}
-
-bool fimc_is_hw_frame_done_with_dma(void)
-{
-	return true; /* true after FIMC-IS V4.x */
+	return ret;
 }
 #endif

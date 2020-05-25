@@ -32,14 +32,41 @@
 #include "fimc-is-hw.h"
 #include "fimc-is-core.h"
 #include "fimc-is-device-sensor.h"
-#include "../../sensor/module_framework/fimc-is-device-sensor-peri.h"
+#include "fimc-is-device-sensor-peri.h"
 #include "fimc-is-resourcemgr.h"
 #include "fimc-is-dt.h"
 
 #include "fimc-is-helper-i2c.h"
 #include "fimc-is-companion.h"
+#include "fimc-is-device-companion.h"
 
 #define FIMC_IS_DEV_COMP_DEV_NAME "73C2"
+static const struct fimc_is_companion_cfg config_comp2_sensor_2p2_rear[] = {
+	FIMC_IS_COMPANION_CFG(5328, 3000, 30, 0), /* Full 16:9 mode */
+	FIMC_IS_COMPANION_CFG(4000, 3000, 30, 1), /* Full 4:3 mode */
+	FIMC_IS_COMPANION_CFG(3008, 3000, 30, 2), /* Full 1:1 mode */
+	FIMC_IS_COMPANION_CFG(5328, 3000, 24, 3), /* Full 16:9 mode */
+	FIMC_IS_COMPANION_CFG(4000, 3000, 24, 4), /* Full 4:3 mode */
+	FIMC_IS_COMPANION_CFG(3008, 3000, 24, 5), /* Full 1:1 mode */
+	FIMC_IS_COMPANION_CFG(2664, 1500, 60, 6), /* 2x2 Binning mode */
+	FIMC_IS_COMPANION_CFG(2664, 1500, 30, 7), /* 2x2 Binning mode */
+	FIMC_IS_COMPANION_CFG(1328, 748, 120, 8), /* 4x4 Binning mode */
+};
+
+static const struct fimc_is_companion_cfg config_comp2_sensor_2p2_front[] = {
+	FIMC_IS_COMPANION_CFG(2608, 1960, 30, 14), /* Full mode */
+	FIMC_IS_COMPANION_CFG(652, 488, 112, 15), /* 4x4 Binning mode */
+};
+
+static const struct fimc_is_companion_cfg *config_comp2_sensor_2p2[] = {
+	config_comp2_sensor_2p2_rear,
+	config_comp2_sensor_2p2_front,
+};
+
+static const u32 config_comp2_sensor_2p2_sizes[] = {
+	ARRAY_SIZE(config_comp2_sensor_2p2_rear),
+	ARRAY_SIZE(config_comp2_sensor_2p2_front),
+};
 
 int fimc_is_comp_stream_on(struct v4l2_subdev *subdev)
 {
@@ -61,7 +88,7 @@ int fimc_is_comp_stream_on(struct v4l2_subdev *subdev)
 	}
 
 	fimc_is_comp_i2c_read(client, 0x0, &companion_id);
-	info("Companion validation: 0x%04x\n", companion_id);
+	dbg_preproc("Companion name: 0x%04x\n", companion_id);
 
 	ret = fimc_is_comp_i2c_write(client, 0x6800, 1);
 	if (ret) {
@@ -69,7 +96,7 @@ int fimc_is_comp_stream_on(struct v4l2_subdev *subdev)
 	}
 
 	fimc_is_comp_i2c_read(client, 0x6800, &companion_id);
-	info("indirect Companion stream on status: 0x%04x, %s\n", companion_id, __func__);
+	info("Companion stream on (%#x)\n", companion_id);
 p_err:
 	return ret;
 }
@@ -93,26 +120,24 @@ int fimc_is_comp_stream_off(struct v4l2_subdev *subdev)
 		goto p_err;
 	}
 
-	fimc_is_comp_i2c_read(client, 0x0, &companion_id);
-	info("Companion validation: 0x%04x\n", companion_id);
-
 	ret = fimc_is_comp_i2c_write(client, 0x6800, 0);
 	if (ret) {
 		err("i2c write fail");
 	}
 
 	fimc_is_comp_i2c_read(client, 0x6800, &companion_id);
-	info("indirect Companion stream off status: 0x%04x, %s\n", companion_id, __func__);
+	info("Companion stream off (%#x)\n", companion_id);
 p_err:
 	return ret;
 }
 
-int fimc_is_comp_mode_change(struct v4l2_subdev *subdev, u32 mode)
+int fimc_is_comp_mode_change(struct v4l2_subdev *subdev,
+		struct fimc_is_device_sensor *device)
 {
 	struct fimc_is_preprocessor *preprocessor;
 	struct i2c_client *client;
 	int ret = 0;
-	u16 compdata;
+	u16 compmode, compdata;
 
 	BUG_ON(!subdev);
 
@@ -122,20 +147,60 @@ int fimc_is_comp_mode_change(struct v4l2_subdev *subdev, u32 mode)
 	client = preprocessor->client;
 	if (unlikely(!client)) {
 		err("client is NULL");
-		ret = -EINVAL;
-		goto p_err;
+		return -EINVAL;
 	}
 
-	if(preprocessor->position == 1)
-		mode = COMPANION_FRONT_MODE_OFFSET_4E6;
+	if (unlikely(!device)) {
+		err("device_sensor is NULL");
+		return -EINVAL;
+	}
 
-	ret = fimc_is_comp_i2c_write(client, 0x0042, mode);
+	ret = fimc_is_comp_get_mode(subdev, device, &compmode);
+	if (ret) {
+		merr("Companion search mode is fail (%d)\n", device, ret);
+		return ret;
+	}
+
+	ret = fimc_is_comp_i2c_write(client, 0x0042, compmode);
 	if (ret) {
 		err("i2c write fail");
 	}
 
-	fimc_is_comp_i2c_read(client, 0x42, &compdata);
+	fimc_is_comp_i2c_read(client, 0x0042, &compdata);
 	info("direct Companion mode: 0x%04x, %s\n", compdata, __func__);
+
+	return ret;
+}
+
+int fimc_is_comp_wait_s_input(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	int waiting = 0;
+	struct fimc_is_preprocessor *preprocessor;
+	struct fimc_is_device_preproc *device_preproc = NULL;
+
+	BUG_ON(!subdev);
+
+	preprocessor = (struct fimc_is_preprocessor *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!preprocessor);
+
+
+	device_preproc = preprocessor->device_preproc;
+	if (!test_bit(FIMC_IS_PREPROC_OPEN, &device_preproc->state)) {
+		err("preprocessor is not ready\n");
+		BUG();
+	}
+
+	while (!test_bit(FIMC_IS_PREPROC_S_INPUT, &device_preproc->state)) {
+		usleep_range(1000, 1000);
+		if (waiting++ >= MAX_PREPROC_S_INPUT_WAITING) {
+			err("preprocessor s_input is not finished\n");
+			ret = -EBUSY;
+			goto p_err;
+		}
+	}
+
+	dbg_preproc("preproc finished(wait : %d)", waiting);
 
 p_err:
 	return ret;
@@ -150,6 +215,7 @@ static struct fimc_is_preprocessor_ops preprocessor_ops = {
 	.preprocessor_stream_on = fimc_is_comp_stream_on,
 	.preprocessor_stream_off = fimc_is_comp_stream_off,
 	.preprocessor_mode_change = fimc_is_comp_mode_change,
+	.preprocessor_wait_s_input = fimc_is_comp_wait_s_input,
 };
 
 static const struct v4l2_subdev_core_ops core_ops = {
@@ -173,7 +239,7 @@ static int fimc_is_comp_probe(struct platform_device *pdev)
 	struct device_node *dnode;
 	struct device *dev;
 	u32 mindex = 0, mmax = 0;
-	u32 sensor_id = 0;
+	u32 node_id = 0;
 	u32 position = 0;
 
 	BUG_ON(!pdev);
@@ -196,7 +262,7 @@ static int fimc_is_comp_probe(struct platform_device *pdev)
 		goto p_err;
 	}
 
-	ret = of_property_read_u32(dnode, "id", &sensor_id);
+	ret = of_property_read_u32(dnode, "id", &node_id);
 	if (ret) {
 		err("id read is fail(%d)", ret);
 		goto p_err;
@@ -210,25 +276,25 @@ static int fimc_is_comp_probe(struct platform_device *pdev)
 
 	probe_info("%s position %d\n", __func__, position);
 
-	device = &core->sensor[sensor_id];
+	device = &core->sensor[node_id];
 	if (!device) {
 		err("sensor device is NULL");
 		ret = -ENOMEM;
 		goto p_err;
 	}
-	info("device module id = %d \n",device->pdata->id);
+	probe_info("device module id = %d \n",device->pdata->id);
 
 	resourcemgr = device->resourcemgr;
 	module_enum = device->module_enum;
 
 	mmax = atomic_read(&resourcemgr->rsccount_module);
 	for (mindex = 0; mindex < mmax; mindex++) {
-		if (mindex == position) {
+		if (module_enum[mindex].position == position) {
 			sensor_peri = (struct fimc_is_device_sensor_peri *)module_enum[mindex].private_data;
 			if (!sensor_peri) {
 				return -EPROBE_DEFER;
 			}
-			info("module id : %d \n", mindex);
+			probe_info("sensor id : %d \n", module_enum[mindex].sensor_id);
 			break;
 		}
 	}
@@ -249,20 +315,22 @@ static int fimc_is_comp_probe(struct platform_device *pdev)
 
 	sensor_peri->subdev_preprocessor = subdev_preprocessor;
 
+	preprocessor->device_preproc = &core->preproc;
 	preprocessor->preprocessor_ops = &preprocessor_ops;
 
 	/* This name must is match to sensor_open_extended actuator name */
 	preprocessor = &sensor_peri->preprocessor;
 	preprocessor->id = PREPROCESSOR_NAME_73C2;
 	preprocessor->subdev = subdev_preprocessor;
-	preprocessor->device = sensor_id;
+	preprocessor->device = node_id;
 	preprocessor->client = core->client0;
-	preprocessor->position = position;
+	preprocessor->cfg = config_comp2_sensor_2p2[position];
+	preprocessor->cfgs = config_comp2_sensor_2p2_sizes[position];
 
 	v4l2_subdev_init(subdev_preprocessor, &subdev_ops);
 	v4l2_set_subdevdata(subdev_preprocessor, preprocessor);
 	v4l2_set_subdev_hostdata(subdev_preprocessor, device);
-	snprintf(subdev_preprocessor->name, V4L2_SUBDEV_NAME_SIZE, "preprop-subdev.%d", sensor_id);
+	snprintf(subdev_preprocessor->name, V4L2_SUBDEV_NAME_SIZE, "preprop-subdev.%d", node_id);
 
 	ret = v4l2_device_register_subdev(&device->v4l2_dev, subdev_preprocessor);
 	if (ret) {

@@ -29,11 +29,17 @@
 #endif
 
 /*
+ * sensor scenario (26 ~ 31 bit)
+ */
+#define SENSOR_SCN_MASK			0xFC000000
+#define SENSOR_SCN_SHIFT			26
+
+/*
  * stream type
  * [0] : No reprocessing type
  * [1] : reprocessing type
  */
-#define INPUT_STREAM_MASK			0xFF000000
+#define INPUT_STREAM_MASK			0x03000000
 #define INPUT_STREAM_SHIFT			24
 
 /*
@@ -52,8 +58,8 @@
 
 /*
  * input type
- * [0] : on the fly input
- * [1] : memory input
+ * [0] : memory input
+ * [1] : on the fly input
  * [2] : pipe input
  */
 #define INPUT_INTYPE_MASK			0x000000F0
@@ -121,6 +127,7 @@ enum fimc_is_video_dev_num {
 	FIMC_IS_VIDEO_SS3_NUM,
 	FIMC_IS_VIDEO_SS4_NUM,
 	FIMC_IS_VIDEO_SS5_NUM,
+	FIMC_IS_VIDEO_BNS_NUM,
 	FIMC_IS_VIDEO_PRE_NUM = 9,
 	FIMC_IS_VIDEO_30S_NUM = 10,
 	FIMC_IS_VIDEO_30C_NUM,
@@ -202,6 +209,7 @@ struct fimc_is_frame_cfg {
 	u32				height;
 	u32				size[FIMC_IS_MAX_PLANES];
 	u32				bytesperline[FIMC_IS_MAX_PLANES];
+	u32				num_buffers; /* total number of buffers per frame */
 };
 
 struct fimc_is_queue_ops {
@@ -258,6 +266,7 @@ struct fimc_is_video_ctx {
 	unsigned long			state;
 
 	void				*device;
+	void				*next_device;
 	void				*subdev;
 	struct fimc_is_video		*video;
 
@@ -398,6 +407,11 @@ extern int fimc_is_ssxvc3_video_probe(void *data);
 #define GET_QUEUE(vctx) 		(vctx ? &(vctx)->queue : NULL)
 #define GET_FRAMEMGR(vctx)		(vctx ? &(vctx)->queue.framemgr : NULL)
 #define GET_DEVICE(vctx)		(vctx ? (vctx)->device : NULL)
+#ifdef CONFIG_USE_SENSOR_GROUP
+#define GET_DEVICE_ISCHAIN(vctx)	(vctx ? (((vctx)->next_device) ? (vctx)->next_device : (vctx)->device) : NULL)
+#else
+#define GET_DEVICE_ISCHAIN(vctx)	GET_DEVICE(vctx)
+#endif
 #define CALL_QOPS(q, op, args...)	(((q)->qops->op) ? ((q)->qops->op(args)) : 0)
 #define CALL_VOPS(v, op, args...)	(((v)->vops.op) ? ((v)->vops.op(v, args)) : 0)
 

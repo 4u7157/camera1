@@ -33,7 +33,6 @@ enum exynos_flite_id {
 	FLITE_ID_C = 2,
 	FLITE_ID_D = 3,
 	FLITE_ID_END,
-	FLITE_ID_NOTHING = 100,
 };
 
 enum exynos_sensor_channel {
@@ -44,11 +43,7 @@ enum exynos_sensor_channel {
 
 enum exynos_sensor_position {
 	SENSOR_POSITION_REAR = 0,
-	SENSOR_POSITION_FRONT = 1,
-	SENSOR_POSITION_SECURE = 2,
-	SENSOR_POSITION_REAR2 = 3,
-	SENSOR_POSITION_REAR3 = 4,
-	SENSOR_POSITION_END
+	SENSOR_POSITION_FRONT
 };
 
 enum exynos_sensor_id {
@@ -89,10 +84,7 @@ enum exynos_sensor_id {
 	SENSOR_NAME_S5K3M3			= 33,
 	SENSOR_NAME_S5K4H5YC_FF			= 34,
 	SENSOR_NAME_S5K2L7			= 35,
-	SENSOR_NAME_S5K5E9			= 41,
 	SENSOR_NAME_S5K4EC			= 57,
-	SENSOR_NAME_S5K2P6			= 58,
-	SENSOR_NAME_S5K3L6			= 59,
 
 	/* 101~200: SONY sensors */
 	SENSOR_NAME_IMX135			= 101,
@@ -117,10 +109,11 @@ enum exynos_sensor_id {
 	SENSOR_NAME_DSIM			= 205,
 	SENSOR_NAME_SR259			= 206,
 	SENSOR_NAME_VIRTUAL			= 207,
-	SENSOR_NAME_GC5035		    = 210,	
+	SENSOR_NAME_SR846			= 208,
+	SENSOR_NAME_SR556			= 209,
+	SENSOR_NAME_SR556B			= 210,
 
 	SENSOR_NAME_S5K5E6			= 254, // IRIS Camera Sensor
-	SENSOR_NAME_S5K5F1			= 306, // IRIS Camera Sensor
 
 	/* 256~: currently not used */
 	SENSOR_NAME_CUSTOM			= 301,
@@ -149,9 +142,7 @@ enum actuator_name {
 	ACTUATOR_NAME_BU63165		= 15,
 	ACTUATOR_NAME_AK7372		= 16,
 	ACTUATOR_NAME_AK7371_DUAL	= 17,
-	ACTUATOR_NAME_AK737X 		= 18,
-	ACTUATOR_NAME_DW9808 		= 19,
-	ACTUATOR_NAME_ZC535		= 20,
+	ACTUATOR_NAME_DW9808		= 18,
 	ACTUATOR_NAME_END,
 	ACTUATOR_NAME_NOTHING		= 100,
 };
@@ -207,6 +198,13 @@ enum sensor_peri_type {
 
 enum sensor_dma_channel_type {
 	DMA_CH_NOT_DEFINED	= 100,
+};
+
+enum sensor_retention_state
+{
+	SENSOR_RETENTION_DISABLE = 0, /* disable */
+	SENSOR_RETENTION_READY  = 1,  /* cold boot */
+	SENSOR_RETENTION_USE = 2,     /* warm boot */
 };
 
 struct i2c_type {
@@ -273,13 +271,14 @@ struct sensor_open_extended {
 	u32 mipi_lane_num;
 	u32 mipi_settle_line;
 	u32 mipi_speed;
-	/* Skip setfile loading when fast_open_sensor is not 0 */
-	u32 fast_open_sensor;
+	/* Use sensor retention mode */
+	u32 use_retention_mode;
 	/* Activatiing sensor self calibration mode (6A3) */
 	u32 self_calibration_mode;
 	/* This field is to adjust I2c clock based on ACLK200 */
 	/* This value is varied in case of rev 0.2 */
 	u32 I2CSclk;
+	struct sensor_protocol1 reserved[4];
 };
 
 struct exynos_platform_fimc_is_sensor {

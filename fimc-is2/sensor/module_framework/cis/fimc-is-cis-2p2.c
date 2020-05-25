@@ -47,6 +47,8 @@
 
 static const struct v4l2_subdev_ops subdev_ops;
 
+static const u32 *sensor_2p2_global;
+static u32 sensor_2p2_global_size;
 static const u32 **sensor_2p2_setfiles;
 static const u32 *sensor_2p2_setfile_sizes;
 static const struct sensor_pll_info **sensor_2p2_pllinfos;
@@ -160,11 +162,6 @@ int sensor_2p2_cis_init(struct v4l2_subdev *subdev)
 	int ret = 0;
 	struct fimc_is_cis *cis;
 	u32 setfile_index = 0;
-#ifdef USE_CAMERA_HW_BIG_DATA
-	struct cam_hw_param *hw_param = NULL;
-	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
-#endif
-
 	cis_setting_info setinfo;
 	setinfo.param = NULL;
 	setinfo.return_value = 0;
@@ -184,15 +181,6 @@ int sensor_2p2_cis_init(struct v4l2_subdev *subdev)
 
 	ret = sensor_cis_check_rev(cis);
 	if (ret < 0) {
-#ifdef USE_CAMERA_HW_BIG_DATA
-		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
-		if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
-			fimc_is_sec_get_rear_hw_param(&hw_param);
-		else if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
-			fimc_is_sec_get_front_hw_param(&hw_param);
-		if (hw_param)
-			hw_param->i2c_sensor_err_cnt++;
-#endif
 		warn("sensor_2p2_check_rev is fail when cis init");
 		cis->rev_flag = true;
 		ret = 0;
@@ -204,6 +192,11 @@ int sensor_2p2_cis_init(struct v4l2_subdev *subdev)
 	cis->need_mode_change = false;
 
 	sensor_2p2_cis_data_calculation(sensor_2p2_pllinfos[setfile_index], cis->cis_data);
+
+	/* ARM start */
+	ret = fimc_is_sensor_write8(cis->client, 0x6010, 0x1);
+	/* 3ms delay to operate sensor FW */
+	msleep(3);
 
 	setinfo.return_value = 0;
 	CALL_CISOPS(cis, cis_get_min_exposure_time, subdev, &setinfo.return_value);
@@ -337,6 +330,29 @@ int sensor_2p2_cis_group_param_hold(struct v4l2_subdev *subdev, bool hold)
 	ret = sensor_2p2_cis_group_param_hold_func(subdev, hold);
 	if (ret < 0)
 		goto p_err;
+
+p_err:
+	return ret;
+}
+
+int sensor_2p2_cis_set_global_setting(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct fimc_is_cis *cis = NULL;
+
+	BUG_ON(!subdev);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!cis);
+
+	/* setfile global setting is at camera entrance */
+	ret = sensor_cis_set_registers(subdev, sensor_2p2_global, sensor_2p2_global_size);
+	if (ret < 0) {
+		err("sensor_2p2_set_registers fail!!");
+		goto p_err;
+	}
+
+	dbg_sensor("[%s] global setting done\n", __func__);
 
 p_err:
 	return ret;
@@ -1413,7 +1429,8 @@ int sensor_2p2_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 
 	/* Long digital gain */
 	if (cis_data->companion_data.enable_wdr == true) {
-		ret = fimc_is_sensor_write16(client, 0x305C, long_gain);
+		dgains[0] = dgains[1] = dgains[2] = dgains[3] = long_gain;
+		ret = fimc_is_sensor_write16_array(client, 0x3062, dgains, 4);
 		if (ret < 0)
 			goto p_err;
 	}
@@ -1495,10 +1512,7 @@ int sensor_2p2_cis_get_min_digital_gain(struct v4l2_subdev *subdev, u32 *min_dga
 {
 	int ret = 0;
 	struct fimc_is_cis *cis;
-	struct i2c_client *client;
 	cis_shared_data *cis_data;
-
-	u16 read_value = 0;
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -1513,20 +1527,10 @@ int sensor_2p2_cis_get_min_digital_gain(struct v4l2_subdev *subdev, u32 *min_dga
 	BUG_ON(!cis);
 	BUG_ON(!cis->cis_data);
 
-	client = cis->client;
-	if (unlikely(!client)) {
-		err("client is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-
 	cis_data = cis->cis_data;
 
-	fimc_is_sensor_read16(client, 0x1084, &read_value);
-
-	cis_data->min_digital_gain[0] = read_value;
-
-	cis_data->min_digital_gain[1] = sensor_cis_calc_dgain_permile(read_value);
+	cis_data->min_digital_gain[0] = 0x0100;
+	cis_data->min_digital_gain[1] = 1000;
 
 	*min_dgain = cis_data->min_digital_gain[1];
 
@@ -1537,7 +1541,6 @@ int sensor_2p2_cis_get_min_digital_gain(struct v4l2_subdev *subdev, u32 *min_dga
 	dbg_sensor("[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
 	return ret;
 }
 
@@ -1545,10 +1548,7 @@ int sensor_2p2_cis_get_max_digital_gain(struct v4l2_subdev *subdev, u32 *max_dga
 {
 	int ret = 0;
 	struct fimc_is_cis *cis;
-	struct i2c_client *client;
 	cis_shared_data *cis_data;
-
-	u16 read_value = 0;
 
 #ifdef DEBUG_SENSOR_TIME
 	struct timeval st, end;
@@ -1563,20 +1563,10 @@ int sensor_2p2_cis_get_max_digital_gain(struct v4l2_subdev *subdev, u32 *max_dga
 	BUG_ON(!cis);
 	BUG_ON(!cis->cis_data);
 
-	client = cis->client;
-	if (unlikely(!client)) {
-		err("client is NULL");
-		ret = -EINVAL;
-		goto p_err;
-	}
-
 	cis_data = cis->cis_data;
 
-	fimc_is_sensor_read16(client, 0x1086, &read_value);
-
-	cis_data->max_digital_gain[0] = read_value;
-
-	cis_data->max_digital_gain[1] = sensor_cis_calc_dgain_permile(read_value);
+	cis_data->max_digital_gain[0] = 0x1000;
+	cis_data->max_digital_gain[1] = 16000;
 
 	*max_dgain = cis_data->max_digital_gain[1];
 
@@ -1587,7 +1577,6 @@ int sensor_2p2_cis_get_max_digital_gain(struct v4l2_subdev *subdev, u32 *max_dga
 	dbg_sensor("[%s] time %lu us\n", __func__, (end.tv_sec - st.tv_sec)*1000000 + (end.tv_usec - st.tv_usec));
 #endif
 
-p_err:
 	return ret;
 }
 
@@ -1595,6 +1584,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_init = sensor_2p2_cis_init,
 	.cis_log_status = sensor_2p2_cis_log_status,
 	.cis_group_param_hold = sensor_2p2_cis_group_param_hold,
+	.cis_set_global_setting = sensor_2p2_cis_set_global_setting,
 	.cis_mode_change = sensor_2p2_cis_mode_change,
 	.cis_set_size = sensor_2p2_cis_set_size,
 	.cis_stream_on = sensor_2p2_cis_stream_on,
@@ -1691,7 +1681,18 @@ int cis_2p2_probe(struct i2c_client *client,
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
-	cis->aperture_num = F2_2;
+
+	if (of_property_read_bool(dnode, "sensor_f_number")) {
+		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
+		if (ret) {
+			warn("f-number read is fail(%d)",ret);
+		}
+	} else {
+		cis->aperture_num = F2_2;
+	}
+
+	probe_info("%s f-number %d\n", __func__, cis->aperture_num);
+
 	cis->use_dgain = true;
 	cis->hdr_ctrl_by_again = false;
 
@@ -1704,18 +1705,24 @@ int cis_2p2_probe(struct i2c_client *client,
 	if (strcmp(setfile, "default") == 0 ||
 			strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
+		sensor_2p2_global = sensor_2p2_setfile_A_Global;
+		sensor_2p2_global_size = sizeof(sensor_2p2_setfile_A_Global) / sizeof(sensor_2p2_setfile_A_Global[0]);
 		sensor_2p2_setfiles = sensor_2p2_setfiles_A;
 		sensor_2p2_setfile_sizes = sensor_2p2_setfile_A_sizes;
 		sensor_2p2_pllinfos = sensor_2p2_pllinfos_A;
 		sensor_2p2_max_setfile_num = sizeof(sensor_2p2_setfiles_A) / sizeof(sensor_2p2_setfiles_A[0]);
 	} else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
+		sensor_2p2_global = sensor_2p2_setfile_B_Global;
+		sensor_2p2_global_size = sizeof(sensor_2p2_setfile_B_Global) / sizeof(sensor_2p2_setfile_B_Global[0]);
 		sensor_2p2_setfiles = sensor_2p2_setfiles_B;
 		sensor_2p2_setfile_sizes = sensor_2p2_setfile_B_sizes;
 		sensor_2p2_pllinfos = sensor_2p2_pllinfos_B;
 		sensor_2p2_max_setfile_num = sizeof(sensor_2p2_setfiles_B) / sizeof(sensor_2p2_setfiles_B[0]);
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
+		sensor_2p2_global = sensor_2p2_setfile_A_Global;
+		sensor_2p2_global_size = sizeof(sensor_2p2_setfile_A_Global) / sizeof(sensor_2p2_setfile_A_Global[0]);
 		sensor_2p2_setfiles = sensor_2p2_setfiles_A;
 		sensor_2p2_setfile_sizes = sensor_2p2_setfile_A_sizes;
 		sensor_2p2_pllinfos = sensor_2p2_pllinfos_A;

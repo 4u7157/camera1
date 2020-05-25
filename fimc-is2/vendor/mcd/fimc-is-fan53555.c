@@ -200,7 +200,7 @@ static int fimc_is_fan53555_probe(struct i2c_client *client,
 	fan53555_init(&core->companion_dcdc, client);
 
 #ifdef CONFIG_SOC_EXYNOS5422
-	regulator = regulator_get(NULL, power_name);
+	regulator = regulator_get_optional(NULL, power_name);
 	if (IS_ERR(regulator)) {
 		pr_err("%s : regulator_get(%s) fail\n", __func__, power_name);
 		return PTR_ERR(regulator);

@@ -24,10 +24,12 @@ struct fimc_is_subdev * video2subdev(enum fimc_is_subdev_device_type device_type
 	struct fimc_is_device_sensor *sensor = NULL;
 	struct fimc_is_device_ischain *ischain = NULL;
 
-	if (device_type == FIMC_IS_SENSOR_SUBDEV)
+	if (device_type == FIMC_IS_SENSOR_SUBDEV) {
 		sensor = (struct fimc_is_device_sensor *)device;
-	else
+	} else {
 		ischain = (struct fimc_is_device_ischain *)device;
+		sensor = ischain->sensor;
+	}
 
 	switch (vid) {
 	case FIMC_IS_VIDEO_SS0VC0_NUM:
@@ -309,6 +311,15 @@ int fimc_is_sensor_subdev_close(struct fimc_is_device_sensor *device,
 	}
 
 	vctx->subdev = NULL;
+	if (test_bit(FIMC_IS_SENSOR_DRIVING, &device->state)) {
+		if (test_bit(FIMC_IS_SENSOR_FRONT_START, &device->state)) {
+			merr("sudden close, call sensor_front_stop()\n", device);
+
+			ret = fimc_is_sensor_front_stop(device);
+			if (ret)
+				merr("fimc_is_sensor_front_stop is fail(%d)", device, ret);
+		}
+	}
 
 	ret = fimc_is_subdev_close(subdev);
 	if (ret) {
@@ -392,12 +403,6 @@ static int fimc_is_sensor_subdev_start(void *qdevice,
 	BUG_ON(!queue);
 
 	vctx = container_of(queue, struct fimc_is_video_ctx, queue);
-	if (!vctx) {
-		merr("vctx is NULL", device);
-		ret = -EINVAL;
-		goto p_err;
-	}
-
 	subdev = vctx->subdev;
 	if (!subdev) {
 		merr("subdev is NULL", device);
@@ -535,6 +540,11 @@ static int fimc_is_sensor_subdev_stop(void *qdevice,
 	}
 
 	framemgr = GET_SUBDEV_FRAMEMGR(subdev);
+	if (!framemgr) {
+		merr("framemgr is NULL", device);
+		ret = -EINVAL;
+		goto p_err;
+	}
 	framemgr_e_barrier_irqs(framemgr, FMGR_IDX_16, flags);
 
 	frame = peek_frame(framemgr, FS_PROCESS);
@@ -641,6 +651,9 @@ static int fimc_is_subdev_s_format(struct fimc_is_subdev *subdev,
 				ret = -EINVAL;
 				goto p_err;
 			}
+			break;
+		case V4L2_PIX_FMT_NV12:
+		case V4L2_PIX_FMT_NV21:
 			break;
 		default:
 			merr("format(%d) is not supported", subdev, pixelformat);

@@ -13,6 +13,8 @@
 #define CSI_NOTIFY_VBLANK	11
 #endif
 
+#define CSI_LINE_RATIO		14	/* 70% */
+
 enum fimc_is_csi_state {
 	/* flite join ischain */
 	CSIS_JOIN_ISCHAIN,
@@ -22,7 +24,12 @@ enum fimc_is_csi_state {
 	CSIS_DUMMY,
 	/* WDMA flag */
 	CSIS_DMA_ENABLE,
-	CSIS_START_STREAM
+	CSIS_START_STREAM,
+	/* runtime buffer done state for error */
+	CSIS_BUF_ERR_VC0,
+	CSIS_BUF_ERR_VC1,
+	CSIS_BUF_ERR_VC2,
+	CSIS_BUF_ERR_VC3,
 };
 
 struct fimc_is_device_csi {
@@ -56,14 +63,18 @@ struct fimc_is_device_csi {
 	atomic_t			fcount;
 	struct tasklet_struct		tasklet_csis_str;
 	struct tasklet_struct		tasklet_csis_end;
+	struct tasklet_struct		tasklet_csis_line;
 	struct tasklet_struct		tasklet_csis_dma[CSI_VIRTUAL_CH_MAX];
+	int				pre_dma_enable[CSI_VIRTUAL_CH_MAX];
 
 	/* subdev slots for dma */
-	struct fimc_is_subdev		*dma_subdev[ENTRY_SEN_END];
+	struct fimc_is_subdev		*dma_subdev[CSI_VIRTUAL_CH_MAX];
 
 	/* pointer address from device sensor */
 	struct v4l2_subdev		**subdev;
 	struct phy			*phy;
+
+	u32 error_id;
 
 #ifndef ENABLE_IS_CORE
 	atomic_t                        vblank_count; /* Increase at CSI frame end */
@@ -75,7 +86,6 @@ struct fimc_is_device_csi {
 int __must_check fimc_is_csi_probe(void *parent, u32 instance);
 int __must_check fimc_is_csi_open(struct v4l2_subdev *subdev, struct fimc_is_framemgr *framemgr);
 int __must_check fimc_is_csi_close(struct v4l2_subdev *subdev);
-
 /* for DMA feature */
 extern u32 __iomem *notify_fcount_sen0;
 extern u32 __iomem *notify_fcount_sen1;

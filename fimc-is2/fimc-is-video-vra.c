@@ -291,14 +291,14 @@ static int fimc_is_vra_video_qbuf(struct file *file, void *priv,
 {
 	int ret = 0;
 	struct fimc_is_video_ctx *vctx = file->private_data;
-	struct fimc_is_device_ischain *device;
 	struct fimc_is_queue *queue;
+
+	BUG_ON(!vctx);
 
 #ifdef DBG_STREAMING
 	mdbgv_vra("%s\n", vctx, __func__);
 #endif
 
-	device = GET_DEVICE(vctx);
 	queue = GET_QUEUE(vctx);
 
 	if (!test_bit(FIMC_IS_QUEUE_STREAM_ON, &queue->state)) {
@@ -361,6 +361,11 @@ static int fimc_is_vra_video_prepare(struct file *file, void *priv,
 	       goto p_err;
 	}
 
+	if (!test_bit(FRAME_MEM_MAPPED, &frame->mem_state)) {
+		fimc_is_itf_map(device, GROUP_ID(device->group_vra.id), frame->dvaddr_shot, frame->shot_size);
+		set_bit(FRAME_MEM_MAPPED, &frame->mem_state);
+	}
+
 p_err:
 	return ret;
 }
@@ -420,14 +425,15 @@ static int fimc_is_vra_video_s_input(struct file *file, void *priv,
 	BUG_ON(!vctx);
 	BUG_ON(!vctx->device);
 
-	mdbgv_vra("%s(input : %08X)\n", vctx, __func__, input);
-
 	device = GET_DEVICE(vctx);
 	stream = (input & INPUT_STREAM_MASK) >> INPUT_STREAM_SHIFT;
 	module = (input & INPUT_MODULE_MASK) >> INPUT_MODULE_SHIFT;
 	vindex = (input & INPUT_VINDEX_MASK) >> INPUT_VINDEX_SHIFT;
 	intype = (input & INPUT_INTYPE_MASK) >> INPUT_INTYPE_SHIFT;
 	leader = (input & INPUT_LEADER_MASK) >> INPUT_LEADER_SHIFT;
+
+	mdbgv_vra("%s(input : %08X)[%d,%d,%d,%d,%d]\n", vctx, __func__, input,
+			stream, module, vindex, intype, leader);
 
 	ret = fimc_is_video_s_input(file, vctx);
 	if (ret) {
@@ -656,8 +662,25 @@ static void fimc_is_vra_buffer_finish(struct vb2_buffer *vb)
 	}
 }
 
+static int fimc_is_vra_buffer_init(struct vb2_buffer *vb)
+{
+	struct fimc_is_vb2_buf *vbuf = vb_to_fimc_is_vb2_buf(vb);
+	struct fimc_is_video_ctx *vctx = vb->vb2_queue->drv_priv;
+	unsigned int plane;
+
+	vbuf->ops = vctx->fimc_is_vb2_buf_ops;
+
+	for (plane = 0; plane < vb->num_planes; ++plane) {
+		vbuf->kva[plane] = vbuf->ops->plane_kvaddr(vbuf, plane);
+		vbuf->dva[plane] = vbuf->ops->plane_dvaddr(vbuf, plane);
+	}
+
+	return 0;
+}
+
 const struct vb2_ops fimc_is_vra_qops = {
 	.queue_setup		= fimc_is_vra_queue_setup,
+	.buf_init		= fimc_is_vra_buffer_init,
 	.buf_prepare		= fimc_is_vra_buffer_prepare,
 	.buf_queue		= fimc_is_vra_buffer_queue,
 	.buf_finish		= fimc_is_vra_buffer_finish,

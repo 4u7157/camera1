@@ -45,7 +45,7 @@ const struct fimc_is_subdev_ops fimc_is_subdev_mcsp_ops;
 
 void fimc_is_enter_lib_isr(void)
 {
-	kernel_neon_begin();
+	kernel_neon_begin_partial(32);
 }
 
 void fimc_is_exit_lib_isr(void)
@@ -238,27 +238,10 @@ int fimc_is_hw_camif_cfg(void *sensor_data)
 		val |= (1 << 3);
 		writel(val, isp_mipiphy_con);
 		break;
-	case 2:
-#if !defined(CONFIG_CAMERA_MIPI_PHY_SELECT_M0S2)
-		set_bit(FLITE_DUMMY, &flite->state);
-#else
-		if (is_otf)
-			clear_bit(FLITE_DUMMY, &flite->state);
-		else
-			set_bit(FLITE_DUMMY, &flite->state);
-
-		/* MIPI PHY select to M0S2 for CSIS1 */
-		val = readl(isp_mipiphy_con);
-		val &= (~(1 << 3));
-		writel(val, isp_mipiphy_con);
-#endif
-		break;
 	default:
 		merr("sensor id is invalid(%d)", sensor, sensor->instance);
 		break;
 	}
-
-	iounmap(isp_mipiphy_con);
 
 	return ret;
 }
@@ -285,10 +268,6 @@ int fimc_is_hw_camif_open(void *sensor_data)
 		set_bit(CSIS_DMA_ENABLE, &csi->state);
 		clear_bit(FLITE_DMA_ENABLE, &flite->state);
 		break;
-	case 2:
-		set_bit(CSIS_DMA_ENABLE, &csi->state);
-		clear_bit(FLITE_DMA_ENABLE, &flite->state);
-		break;
 	default:
 		merr("sensor id is invalid(%d)", sensor, sensor->instance);
 		break;
@@ -301,7 +280,6 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 {
 	void __iomem *isp_user_con;
 	struct fimc_is_device_ischain *device;
-	struct fimc_is_device_csi *csi;
 	u32 val;
 
 	BUG_ON(!ischain_data);
@@ -310,23 +288,22 @@ int fimc_is_hw_ischain_cfg(void *ischain_data)
 	if (test_bit(FIMC_IS_ISCHAIN_REPROCESSING, &device->state))
 		return 0;
 
-	csi = (struct fimc_is_device_csi *)v4l2_get_subdevdata(
-			device->sensor->subdev_csi);
-
 	isp_user_con = ioremap(SYSREG_ISP_USER_CON, SZ_4K);
 
 	val = readl(isp_user_con);
+	/* RT setting */
+	val |= (1 << 0)| /* VRA set to RT */
+		(1 << 1); /* ISP & Scaler set to RT */
 
-	/* NRT: 0, RT: 1 */
-	/* ISP & Scaler: RT, VRA: RT */
-	val |= (1 << 1) | (1 << 0);
-
-	/* BNS Input Select */
-	/* CSIS0: 0, CSIS1: 1 */
-	if (csi->instance == 0)
+	/* BNS Input Select
+	 * CSIS0 : 0 (BACK)
+	 * CSIS1 : 1 (FRONT)
+	 */
+	if (device->sensor->instance == 0) {
 		val &= ~(1 << 3);
-	else
+	} else {
 		val |= (1 << 3);
+	}
 
 	writel(val, isp_user_con);
 
@@ -536,12 +513,6 @@ int fimc_is_hw_get_address(void *itfc_data, void *pdev_data, int hw_id)
 		itf_hwip->hw_ip->regs_b = ioremap_nocache(mem_res->start, resource_size(mem_res));
 		if (!itf_hwip->hw_ip->regs) {
 			dev_err(&pdev->dev, "Failed to remap io region\n");
-			return -EINVAL;
-		}
-
-		itf_hwip->hw_ip->regs_dump = kzalloc(SZ_64K, GFP_KERNEL);
-		if (!itf_hwip->hw_ip->regs_dump) {
-			dev_err(&pdev->dev, "Failed to allc regs_dump\n");
 			return -EINVAL;
 		}
 
@@ -769,23 +740,39 @@ int fimc_is_hw_request_irq(void *itfc_data, int hw_id)
 	return ret;
 }
 
-int fimc_is_hw_set_fullbypass(void *itfc_data, int hw_id, bool bypass)
+int fimc_is_hw_s_ctrl(void *itfc_data, int hw_id, enum hw_s_ctrl_id id, void *val)
 {
-	return 0;
+	int ret = 0;
+
+	switch (id) {
+	case HW_S_CTRL_FULL_BYPASS:
+		/* nothing */
+		break;
+	case HW_S_CTRL_CHAIN_IRQ:
+		/* nothing */
+		break;
+	default:
+		break;
+	}
+
+	return ret;
 }
 
-int fimc_is_hw_set_chain_interrupt(void *itfc_data)
+int fimc_is_hw_g_ctrl(void *itfc_data, int hw_id, enum hw_g_ctrl_id id, void *val)
 {
-	return 0;
-}
+	int ret = 0;
 
-bool fimc_is_has_mcsc(void)
-{
-	return true;
-}
+	switch (id) {
+	case HW_G_CTRL_FRM_DONE_WITH_DMA:
+		*(bool *)val = false;
+		break;
+	case HW_G_CTRL_HAS_MCSC:
+		*(bool *)val = true;
+		break;
+	case HW_G_CTRL_HAS_VRA_CH1_ONLY:
+		*(bool *)val = false;
+		break;
+	}
 
-bool fimc_is_hw_frame_done_with_dma(void)
-{
-	/* HACK: 3AA DMA interrupt callback is skipped because preventing interrupt loss. */
-	return true; /* true after FIMC-IS V4.x */
+	return ret;
 }

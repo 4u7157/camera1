@@ -19,7 +19,7 @@
 #include "fimc-is-type.h"
 
 static int fimc_is_ischain_3ap_cfg(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *frame,
 	struct fimc_is_crop *incrop,
 	struct fimc_is_crop *otcrop,
@@ -154,7 +154,7 @@ p_err:
 }
 
 static int fimc_is_ischain_3ap_tag(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *ldr_frame,
 	struct camera2_node *node)
 {
@@ -164,8 +164,11 @@ static int fimc_is_ischain_3ap_tag(struct fimc_is_subdev *subdev,
 	struct camera2_scaler_uctl *scalerUd;
 	struct taa_param *taa_param;
 	struct fimc_is_crop *otcrop, otparm;
+	struct fimc_is_device_ischain *device;
 	u32 lindex, hindex, indexes;
 	u32 pixelformat = 0;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!device);
 	BUG_ON(!device->is_region);

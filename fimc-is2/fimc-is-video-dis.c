@@ -289,14 +289,14 @@ static int fimc_is_dis_video_qbuf(struct file *file, void *priv,
 {
 	int ret = 0;
 	struct fimc_is_video_ctx *vctx = file->private_data;
-	struct fimc_is_device_ischain *device;
 	struct fimc_is_queue *queue;
+
+	BUG_ON(!vctx);
 
 #ifdef DBG_STREAMING
 	mdbgv_dis("%s\n", vctx, __func__);
 #endif
 
-	device = GET_DEVICE(vctx);
 	queue = GET_QUEUE(vctx);
 
 	if (!test_bit(FIMC_IS_QUEUE_STREAM_ON, &queue->state)) {
@@ -426,14 +426,15 @@ static int fimc_is_dis_video_s_input(struct file *file, void *priv,
 	BUG_ON(!vctx);
 	BUG_ON(!vctx->device);
 
-	mdbgv_dis("%s(input : %08X)\n", vctx, __func__, input);
-
 	device = GET_DEVICE(vctx);
 	stream = (input & INPUT_STREAM_MASK) >> INPUT_STREAM_SHIFT;
 	module = (input & INPUT_MODULE_MASK) >> INPUT_MODULE_SHIFT;
 	vindex = (input & INPUT_VINDEX_MASK) >> INPUT_VINDEX_SHIFT;
 	intype = (input & INPUT_INTYPE_MASK) >> INPUT_INTYPE_SHIFT;
 	leader = (input & INPUT_LEADER_MASK) >> INPUT_LEADER_SHIFT;
+
+	mdbgv_dis("%s(input : %08X)[%d,%d,%d,%d,%d]\n", vctx, __func__, input,
+			stream, module, vindex, intype, leader);
 
 	ret = fimc_is_video_s_input(file, vctx);
 	if (ret) {
@@ -664,7 +665,7 @@ static void fimc_is_dis_buffer_finish(struct vb2_buffer *vb)
 
 const struct vb2_ops fimc_is_dis_qops = {
 	.queue_setup		= fimc_is_dis_queue_setup,
-	.buf_init			= fimc_is_buffer_init,
+	.buf_init		= fimc_is_buffer_init,
 	.buf_prepare		= fimc_is_dis_buffer_prepare,
 	.buf_queue		= fimc_is_dis_buffer_queue,
 	.buf_finish		= fimc_is_dis_buffer_finish,

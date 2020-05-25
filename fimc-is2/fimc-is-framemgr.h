@@ -18,6 +18,9 @@
 #define FIMC_IS_MAX_BUFS	VIDEO_MAX_FRAME
 #define FIMC_IS_MAX_PLANES	VIDEO_MAX_PLANES
 
+/*matching for xxxTargetAddress in struct camera2_scaler_uctl */
+#define FIMC_IS_MAX_TARGET_ADDR	4
+
 #define FRAMEMGR_ID_INVALID	0x0000000
 #define FRAMEMGR_ID_SSX 	0x0000100
 #define FRAMEMGR_ID_SSXVC0	0x0000011
@@ -107,6 +110,15 @@ enum fimc_is_frame_state {
 	FS_COMPLETE,
 	FS_INVALID
 };
+
+enum fimc_is_hw_frame_state {
+	FS_HW_FREE,
+	FS_HW_REQUEST,
+	FS_HW_CONFIGURE,
+	FS_HW_WAIT_DONE,
+	FS_HW_INVALID
+};
+
 #define NR_FRAME_STATE FS_INVALID
 
 enum fimc_is_frame_mem_state {
@@ -152,6 +164,7 @@ struct fimc_is_frame {
 	/* common use */
 	u32			planes;
 	u32			dvaddr_buffer[FIMC_IS_MAX_PLANES];
+	ulong 		kvaddr_buffer[FIMC_IS_MAX_PLANES];
 
 	/* internal use */
 	unsigned long		mem_state;
@@ -179,6 +192,11 @@ struct fimc_is_frame {
 	/* time measure internally */
 	struct fimc_is_monitor	mpoint[TMM_END];
 #endif
+
+#ifdef DBG_DRAW_DIGIT
+	u32			width;
+	u32			height;
+#endif
 };
 
 struct fimc_is_framemgr {
@@ -193,6 +211,7 @@ struct fimc_is_framemgr {
 	struct list_head	queued_list[NR_FRAME_STATE];
 };
 
+int frame_fcount(struct fimc_is_frame *frame, void *data);
 int put_frame(struct fimc_is_framemgr *this, struct fimc_is_frame *frame,
 			enum fimc_is_frame_state state);
 struct fimc_is_frame *get_frame(struct fimc_is_framemgr *this,

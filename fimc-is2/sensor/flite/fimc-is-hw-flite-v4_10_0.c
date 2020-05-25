@@ -130,6 +130,7 @@ static void flite_hw_set_dma_offset(u32 __iomem *base_reg,
 		break;
 	case V4L2_PIX_FMT_SBGGR16:
 	case V4L2_PIX_FMT_YUYV:
+	case V4L2_PIX_FMT_YUV422P:
 		cfg |= FLITE_REG_CH1OCAN_OCAN_H(roundup(image->window.o_width * 2, 16));
 		break;
 	default:
@@ -200,6 +201,7 @@ static int flite_hw_set_source_format(u32 __iomem *base_reg, struct fimc_is_imag
 		 */
 		break;
 	case V4L2_PIX_FMT_YUYV:
+	case V4L2_PIX_FMT_YUV422P:
 		format = HW_FORMAT_YUV422_8BIT;
 		break;
 	case V4L2_PIX_FMT_JPEG:
@@ -330,10 +332,10 @@ static void flite_hw_set_start_addr(u32 __iomem *base_reg, u32 number, u32 addr)
 	u32 __iomem *target_reg;
 
 	if (number == 0) {
-		target_reg = base_reg + TO_WORD_OFFSET(0x30);
+		target_reg = base_reg + TO_WORD_OFFSET(0x2FC);
 	} else {
 		number--;
-		target_reg = base_reg + TO_WORD_OFFSET(0x200 + (0x4*number));
+		target_reg = base_reg + TO_WORD_OFFSET(0x300 + (0x4*number));
 	}
 
 	writel(addr, target_reg);
@@ -441,6 +443,10 @@ int flite_hw_set_bns(u32 __iomem *base_reg, bool enable, struct fimc_is_image *i
 	case 1750:
 		factor_x = 1;
 		factor_y = 1;
+		break;
+	case 2000:
+		factor_x = 4;
+		factor_y = 4;
 		break;
 	}
 

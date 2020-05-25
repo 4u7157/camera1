@@ -18,7 +18,7 @@
 #include "fimc-is-type.h"
 
 static int fimc_is_ischain_mxp_cfg(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *frame,
 	struct fimc_is_crop *incrop,
 	struct fimc_is_crop *otcrop,
@@ -32,6 +32,9 @@ static int fimc_is_ischain_mxp_cfg(struct fimc_is_subdev *subdev,
 	struct param_mcs_output *mcs_output;
 	u32 width, height;
 	u32 crange;
+	struct fimc_is_device_ischain *device;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!device);
 	BUG_ON(!incrop);
@@ -72,15 +75,15 @@ static int fimc_is_ischain_mxp_cfg(struct fimc_is_subdev *subdev,
 		mcs_output = fimc_is_itf_g_param(device, frame, PARAM_MCS_OUTPUT4);
 		break;
 	default:
-		mswarn("vid(%d) is not matched", device, subdev, subdev->vid);
-		break;
+		mserr("vid(%d) is not matched", device, subdev, subdev->vid);
+		ret = -EINVAL;
+		goto p_err;
 	}
 
 	mcs_output->otf_format = OTF_OUTPUT_FORMAT_YUV422;
 	mcs_output->otf_bitwidth = OTF_OUTPUT_BIT_WIDTH_8BIT;
 	mcs_output->otf_order = OTF_OUTPUT_ORDER_BAYER_GR_BG;
 
-	mcs_output->dma_cmd = DMA_OUTPUT_COMMAND_DISABLE;
 	mcs_output->dma_bitwidth = DMA_OUTPUT_BIT_WIDTH_8BIT;
 	mcs_output->dma_format = format->hw_format;
 	mcs_output->dma_order = format->hw_order;
@@ -109,24 +112,21 @@ static int fimc_is_ischain_mxp_cfg(struct fimc_is_subdev *subdev,
 		mcs_output->hwfc = 0; /* TODO: enum */
 #endif
 
-	if (!test_bit(FIMC_IS_ISCHAIN_REPROCESSING, &device->state)
-		&& (device->group_mcs.junction == subdev)) {
-
-		msinfo("OTF OUT connection\n", device, subdev);
-		mcs_output->otf_cmd = OTF_OUTPUT_COMMAND_ENABLE;
-
 #ifdef SOC_VRA
-		{
-			struct param_otf_input *otf_input;
-
-			otf_input = fimc_is_itf_g_param(device, frame, PARAM_FD_OTF_INPUT);
-			otf_input->width = width;
-			otf_input->height = height;
-		}
-#endif
-	} else {
-		mcs_output->otf_cmd = OTF_OUTPUT_COMMAND_DISABLE;
+	if (device->group_mcs.junction == subdev) {
+		struct param_otf_input *otf_input;
+		otf_input = fimc_is_itf_g_param(device, frame, PARAM_FD_OTF_INPUT);
+		otf_input->width = width;
+		otf_input->height = height;
+		*lindex |= LOWBIT_OF(PARAM_FD_OTF_INPUT);
+		*hindex |= HIGHBIT_OF(PARAM_FD_OTF_INPUT);
+		(*indexes)++;
 	}
+#endif
+
+	*lindex |= LOWBIT_OF(subdev->param_dma_ot);
+	*hindex |= HIGHBIT_OF(subdev->param_dma_ot);
+	(*indexes)++;
 
 p_err:
 	return ret;
@@ -285,7 +285,7 @@ static int fimc_is_ischain_mxp_start(struct fimc_is_device_ischain *device,
 	(*indexes)++;
 
 #ifdef SOC_VRA
-	if (mcs_output->otf_cmd == OTF_OUTPUT_COMMAND_ENABLE) {
+	if (device->group_mcs.junction == subdev) {
 		otf_input = fimc_is_itf_g_param(device, frame, PARAM_FD_OTF_INPUT);
 		otf_input->width = otcrop->w;
 		otf_input->height = otcrop->h;
@@ -324,7 +324,7 @@ static int fimc_is_ischain_mxp_stop(struct fimc_is_device_ischain *device,
 }
 
 static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
-	struct fimc_is_device_ischain *device,
+	void *device_data,
 	struct fimc_is_frame *ldr_frame,
 	struct camera2_node *node)
 {
@@ -335,9 +335,12 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 	struct mcs_param *mcs_param;
 	struct param_mcs_output *mcs_output;
 	struct fimc_is_crop *incrop, *otcrop, inparm, otparm;
+	struct fimc_is_device_ischain *device;
 	u32 index, lindex, hindex, indexes;
 	u32 pixelformat = 0;
 	u32 *target_addr;
+
+	device = (struct fimc_is_device_ischain *)device_data;
 
 	BUG_ON(!device);
 	BUG_ON(!device->is_region);
@@ -391,9 +394,9 @@ static int fimc_is_ischain_mxp_tag(struct fimc_is_subdev *subdev,
 		target_addr = ldr_frame->shot->uctl.scalerUd.sc4TargetAddress;
 		break;
 	default:
-		target_addr = NULL;
-		mswarn("vid(%d) is not matched", device, subdev, node->vid);
-		break;
+		mserr("vid(%d) is not matched", device, subdev, node->vid);
+		ret = -EINVAL;
+		goto p_err;
 	}
 
 	mcs_output = fimc_is_itf_g_param(device, ldr_frame, index);

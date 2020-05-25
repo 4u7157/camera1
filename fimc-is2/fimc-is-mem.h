@@ -34,7 +34,7 @@ struct fimc_is_vb2_buf_ops {
 };
 
 struct fimc_is_vb2_buf {
-	struct vb2_buffer	vb;
+	struct vb2_buffer		vb;
 	ulong				kva[VIDEO_MAX_PLANES];
 	dma_addr_t			dva[VIDEO_MAX_PLANES];
 
@@ -46,6 +46,7 @@ struct fimc_is_priv_buf_ops {
 	void (*free)(struct fimc_is_priv_buf *pbuf);
 	ulong (*kvaddr)(struct fimc_is_priv_buf *pbuf);
 	dma_addr_t (*dvaddr)(struct fimc_is_priv_buf *pbuf);
+	phys_addr_t (*phaddr)(struct fimc_is_priv_buf *pbuf);
 	void (*sync_for_device)(struct fimc_is_priv_buf *pbuf,
 							off_t offset, size_t size,
 							enum dma_data_direction dir);
@@ -59,6 +60,7 @@ struct fimc_is_priv_buf {
 	size_t	size;
 	size_t	align;
 	void	*ctx;
+	void	*kvaddr;
 
 	const struct fimc_is_priv_buf_ops *ops;
 	void	*priv;
@@ -83,7 +85,7 @@ struct fimc_is_priv_buf {
 	((buf)->ops->op ? (buf)->ops->op((buf), args) : 0)
 
 struct fimc_is_mem_ops {
-	void *(*init)(struct platform_device *pdev);
+	void *(*init)(struct platform_device *pdev, long flag);
 	void (*cleanup)(void *ctx);
 	int (*resume)(void *ctx);
 	void (*suspend)(void *ctx);
@@ -94,10 +96,12 @@ struct fimc_is_mem_ops {
 
 struct fimc_is_mem {
 	struct vb2_alloc_ctx				*default_ctx;
-	const struct fimc_is_mem_ops		*fimc_is_mem_ops;
+	struct vb2_alloc_ctx				*phcontig_ctx;
+	const struct fimc_is_mem_ops			*fimc_is_mem_ops;
 	const struct vb2_mem_ops			*vb2_mem_ops;
-	const struct fimc_is_vb2_buf_ops	*fimc_is_vb2_buf_ops;
-	void								*priv;
+	const struct fimc_is_vb2_buf_ops		*fimc_is_vb2_buf_ops;
+	void						*priv;
+	struct fimc_is_priv_buf *(*kmalloc)(size_t size, size_t align);
 };
 
 #define CALL_MEMOP(mem, op, args...)			\
@@ -119,8 +123,6 @@ struct fimc_is_minfo {
 	struct fimc_is_priv_buf *pb_setfile;
 	struct fimc_is_priv_buf *pb_rear_cal;
 	struct fimc_is_priv_buf *pb_front_cal;
-	struct fimc_is_priv_buf *pb_rear2_cal;
-	struct fimc_is_priv_buf *pb_rear3_cal;
 	struct fimc_is_priv_buf *pb_debug;
 	struct fimc_is_priv_buf *pb_fshared;
 	struct fimc_is_priv_buf *pb_dregion;
@@ -138,6 +140,7 @@ struct fimc_is_minfo {
 	ulong		kvaddr;
 	dma_addr_t	dvaddr_lib;
 	ulong		kvaddr_lib;
+	phys_addr_t	phaddr_debug;
 	dma_addr_t	dvaddr_debug;
 	ulong		kvaddr_debug;
 	dma_addr_t	dvaddr_fshared;
@@ -157,8 +160,6 @@ struct fimc_is_minfo {
 	ulong		kvaddr_setfile;
 	ulong		kvaddr_rear_cal;
 	ulong		kvaddr_front_cal;
-	ulong		kvaddr_rear2_cal;
-	ulong		kvaddr_rear3_cal;
 };
 
 int fimc_is_mem_init(struct fimc_is_mem *mem, struct platform_device *pdev);

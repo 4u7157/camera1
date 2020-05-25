@@ -27,3 +27,11 @@ config CAMERA_FLASH_GPIO_OBJ
         default n
         help
           Use to build GPIO driver.
+
+config CAMERA_FLASH_I2C_OBJ
+        bool "Use I2C"
+	depends on USE_DIRECT_IS_CONTROL
+	depends on CAMERA_FLASH_SELECT
+        default n
+        help
+          Use to build I2C driver.

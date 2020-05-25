@@ -90,19 +90,20 @@ void fimc_is_sensor_ctl_get_ae_index(struct fimc_is_device_sensor *device,
 	BUG_ON(!module);
 
 	/* Below setting are different for each sensor */
-	if (module->sensor_id == SENSOR_NAME_S5K2P2 ||
+	if (module->sensor_id == SENSOR_NAME_S5K2L1 ||
+		module->sensor_id == SENSOR_NAME_S5K2P2 ||
 		module->sensor_id == SENSOR_NAME_S5K2P3 ||
-		module->sensor_id == SENSOR_NAME_S5K2P6 ||
 		module->sensor_id == SENSOR_NAME_S5K2P8 ||
 		module->sensor_id == SENSOR_NAME_S5K3P3 ||
-		module->sensor_id == SENSOR_NAME_S5K3P8 ||
+		module->sensor_id == SENSOR_NAME_S5K3M2 ||
 		module->sensor_id == SENSOR_NAME_S5K3L2 ||
-		module->sensor_id == SENSOR_NAME_S5K3M3 ||
 		module->sensor_id == SENSOR_NAME_IMX220 ||
 		module->sensor_id == SENSOR_NAME_IMX240 ||
-		module->sensor_id == SENSOR_NAME_IMX258 ||
-		module->sensor_id == SENSOR_NAME_S5K5E9 ||
-		module->sensor_id == SENSOR_NAME_SR259) {
+		module->sensor_id == SENSOR_NAME_IMX241 ||
+		module->sensor_id == SENSOR_NAME_SR259  ||
+		module->sensor_id == SENSOR_NAME_SR556  ||
+		module->sensor_id == SENSOR_NAME_SR846  ||
+		module->sensor_id == SENSOR_NAME_IMX258) {
 		*expo_index = NEXT_FRAME;
 		*again_index = NEXT_FRAME;
 		*dgain_index = NEXT_FRAME;
@@ -501,7 +502,8 @@ void fimc_is_sensor_ctl_frame_evt(struct fimc_is_device_sensor *device)
 		/* FuncCompanionEnableBlock() */
 	}
 
-	if (module_ctl->sensor_frame_number == applied_frame_number && module_ctl->alg_reset_flag == true) {
+	if ((module_ctl->valid_sensor_ctrl == true) ||
+		(module_ctl->sensor_frame_number == applied_frame_number && module_ctl->alg_reset_flag == true)) {
 		sensor_ctrl = &module_ctl->cur_cam20_sensor_ctrl;
 		sensor_uctrl = &module_ctl->cur_cam20_sensor_udctrl;
 

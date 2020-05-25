@@ -47,6 +47,8 @@
 
 static const struct v4l2_subdev_ops subdev_ops;
 
+static const u32 *sensor_5e3_global;
+static u32 sensor_5e3_global_size;
 static const u32 **sensor_5e3_setfiles;
 static const u32 *sensor_5e3_setfile_sizes;
 static const struct sensor_pll_info **sensor_5e3_pllinfos;
@@ -155,15 +157,17 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	struct fimc_is_cis *cis;
 	u32 setfile_index = 0;
 	cis_setting_info setinfo;
-#ifdef USE_CAMERA_HW_BIG_DATA
-	struct cam_hw_param *hw_param = NULL;
-	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
-#endif
 
 #if USE_OTP_AWB_CAL_DATA
 	struct i2c_client *client = NULL;
 	u8 selected_page;
 	u16 data16[4];
+	u8 cal_map_ver[4];
+	bool skip_cal_write = false;
+#endif
+#ifdef USE_CAMERA_HW_BIG_DATA
+	struct cam_hw_param *hw_param = NULL;
+	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 #endif
 
 	setinfo.param = NULL;
@@ -195,17 +199,16 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	if (ret < 0) {
 #ifdef USE_CAMERA_HW_BIG_DATA
 		sensor_peri = container_of(cis, struct fimc_is_device_sensor_peri, cis);
-		if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
+		if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_REAR)
 			fimc_is_sec_get_rear_hw_param(&hw_param);
-		else if (sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
+		else if(sensor_peri && sensor_peri->module->position == SENSOR_POSITION_FRONT)
 			fimc_is_sec_get_front_hw_param(&hw_param);
-		if (hw_param)
+		if(hw_param)
 			hw_param->i2c_sensor_err_cnt++;
 #endif
 		warn("sensor_5e3_check_rev is fail when cis init");
 		cis->rev_flag = true;
-		ret = -EINVAL;
-		goto p_err;
+		ret = 0;
 	}
 
 	cis->cis_data->cur_width = SENSOR_5E3_MAX_WIDTH;
@@ -272,6 +275,29 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	if (unlikely(ret))
 		err("failed to fimc_is_i2c_read (%d)\n", ret);
 
+	ret = fimc_is_sensor_read8(client, 0xA22, &cal_map_ver[0]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA23, &cal_map_ver[1]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA24, &cal_map_ver[2]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+	ret = fimc_is_sensor_read8(client, 0xA25, &cal_map_ver[3]);
+	if (unlikely(ret))
+		err("failed to fimc_is_i2c_read (%d)\n", ret);
+
+	printk(KERN_INFO "5e3 cal map version %c %c %c %c \n",
+		cal_map_ver[0], cal_map_ver[1], cal_map_ver[2], cal_map_ver[3]);
+
+	if (cal_map_ver[0]!=0x56 || cal_map_ver[1]!= 0x30
+		|| cal_map_ver[2] != 0x30 || cal_map_ver[3] < 0x31) {
+		printk(KERN_INFO "5e3 cal map version 0x%x 0x%x 0x%x 0x%x \n",
+			cal_map_ver[0], cal_map_ver[1], cal_map_ver[2], cal_map_ver[3]);
+		skip_cal_write = true;
+	}
+
 	ret = fimc_is_sensor_write8(client, 0xA00, 0x04);
 	if (unlikely(ret))
 		err("failed to fimc_is_i2c_read (%d)\n", ret);
@@ -285,9 +311,7 @@ int sensor_5e3_cis_init(struct v4l2_subdev *subdev)
 	/* Write AWB Cal Data to sensor */
 	msleep(10);
 
-	if ((data16[0] | data16[1] | data16[2] | data16[3]) == 0) {
-		printk(KERN_INFO "Skip! Writing AWB Cal data to sensor\n");
-	} else {
+	if (skip_cal_write == false) {
 		ret = fimc_is_sensor_write16_array(client, 0x020E, data16, 4);
 		if (ret < 0) {
 			printk(KERN_INFO "fimc_is_sensor_write16_array fail\n");
@@ -433,6 +457,29 @@ int sensor_5e3_cis_group_param_hold(struct v4l2_subdev *subdev, bool hold)
 	ret = sensor_5e3_cis_group_param_hold_func(subdev, hold);
 	if (ret < 0)
 		goto p_err;
+
+p_err:
+	return ret;
+}
+
+int sensor_5e3_cis_set_global_setting(struct v4l2_subdev *subdev)
+{
+	int ret = 0;
+	struct fimc_is_cis *cis = NULL;
+
+	BUG_ON(!subdev);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	BUG_ON(!cis);
+
+	/* setfile global setting is at camera entrance */
+	ret = sensor_cis_set_registers(subdev, sensor_5e3_global, sensor_5e3_global_size);
+	if (ret < 0) {
+		err("sensor_5e3_set_registers fail!!");
+		goto p_err;
+	}
+
+	dbg_sensor("[%s] global setting done\n", __func__);
 
 p_err:
 	return ret;
@@ -1251,10 +1298,6 @@ int sensor_5e3_cis_set_analog_gain(struct v4l2_subdev *subdev, struct ae_param *
 	}
 
 	if (analog_gain > cis->cis_data->max_analog_gain[0]) {
-		err("wrong analog gain, input (x%d, %d), max (x%d, %d)",
-			again->val, analog_gain,
-			cis->cis_data->max_analog_gain[1],
-			cis->cis_data->max_analog_gain[0]);
 		analog_gain = cis->cis_data->max_analog_gain[0];
 	}
 
@@ -1496,10 +1539,6 @@ int sensor_5e3_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		long_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (long_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital long gain, input (x%d, %d), max (x%d, %d)\n",
-			dgain->long_val, long_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		long_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1507,10 +1546,6 @@ int sensor_5e3_cis_set_digital_gain(struct v4l2_subdev *subdev, struct ae_param 
 		short_gain = cis->cis_data->min_digital_gain[0];
 	}
 	if (short_gain > cis->cis_data->max_digital_gain[0]) {
-		err("wrong digital short gain, input (x%d, %d), max (x%d, %d)",
-			dgain->short_val, short_gain,
-			cis->cis_data->max_digital_gain[1],
-			cis->cis_data->max_digital_gain[0]);
 		short_gain = cis->cis_data->max_digital_gain[0];
 	}
 
@@ -1718,6 +1753,7 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_init = sensor_5e3_cis_init,
 	.cis_log_status = sensor_5e3_cis_log_status,
 	.cis_group_param_hold = sensor_5e3_cis_group_param_hold,
+	.cis_set_global_setting = sensor_5e3_cis_set_global_setting,
 	.cis_mode_change = sensor_5e3_cis_mode_change,
 	.cis_set_size = sensor_5e3_cis_set_size,
 	.cis_stream_on = sensor_5e3_cis_stream_on,
@@ -1739,9 +1775,6 @@ static struct fimc_is_cis_ops cis_ops = {
 	.cis_get_max_digital_gain = sensor_5e3_cis_get_max_digital_gain,
 	.cis_compensate_gain_for_extremely_br = sensor_cis_compensate_gain_for_extremely_br,
 	.cis_wait_streamoff = sensor_cis_wait_streamoff,
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	.cis_set_initial_exposure = sensor_cis_set_initial_exposure,
-#endif
 };
 
 int cis_5e3_probe(struct i2c_client *client,
@@ -1754,7 +1787,6 @@ int cis_5e3_probe(struct i2c_client *client,
 	struct fimc_is_device_sensor *device = NULL;
 	struct fimc_is_device_sensor_peri *sensor_peri = NULL;
 	u32 sensor_id = 0;
-	u32 fnum = 0;
 	char const *setfile;
 	struct device *dev;
 	struct device_node *dnode;
@@ -1825,17 +1857,20 @@ int cis_5e3_probe(struct i2c_client *client,
 
 	/* belows are depend on sensor cis. MUST check sensor spec */
 	cis->bayer_order = OTF_INPUT_ORDER_BAYER_GR_BG;
+
+	if (of_property_read_bool(dnode, "sensor_f_number")) {
+		ret = of_property_read_u32(dnode, "sensor_f_number", &cis->aperture_num);
+		if (ret) {
+			warn("f-number read is fail(%d)",ret);
+		}
+	} else {
+		cis->aperture_num = F2_2;
+	}
+
+	probe_info("%s f-number %d\n", __func__, cis->aperture_num);
+
 	cis->use_dgain = true;
 	cis->hdr_ctrl_by_again = false;
-
-	ret = of_property_read_u32(dnode, "fnum", &fnum);
-	if (ret) {
-		warn("fnum read is fail(%d), use default f num", ret);
-		cis->aperture_num = F1_9;
-	} else {
-		probe_info("%s f num %d from dt\n", __func__, fnum);
-		cis->aperture_num = fnum;
-	}
 
 	ret = of_property_read_string(dnode, "setfile", &setfile);
 	if (ret) {
@@ -1846,29 +1881,30 @@ int cis_5e3_probe(struct i2c_client *client,
 	if (strcmp(setfile, "default") == 0 ||
 			strcmp(setfile, "setA") == 0) {
 		probe_info("%s setfile_A\n", __func__);
+		sensor_5e3_global = sensor_5e3_setfile_A_Global;
+		sensor_5e3_global_size = sizeof(sensor_5e3_setfile_A_Global) / sizeof(sensor_5e3_setfile_A_Global[0]);
 		sensor_5e3_setfiles = sensor_5e3_setfiles_A;
 		sensor_5e3_setfile_sizes = sensor_5e3_setfile_A_sizes;
 		sensor_5e3_pllinfos = sensor_5e3_pllinfos_A;
 		sensor_5e3_max_setfile_num = sizeof(sensor_5e3_setfiles_A) / sizeof(sensor_5e3_setfiles_A[0]);
 	} else if (strcmp(setfile, "setB") == 0) {
 		probe_info("%s setfile_B\n", __func__);
+		sensor_5e3_global = sensor_5e3_setfile_B_Global;
+		sensor_5e3_global_size = sizeof(sensor_5e3_setfile_B_Global) / sizeof(sensor_5e3_setfile_B_Global[0]);
 		sensor_5e3_setfiles = sensor_5e3_setfiles_B;
 		sensor_5e3_setfile_sizes = sensor_5e3_setfile_B_sizes;
 		sensor_5e3_pllinfos = sensor_5e3_pllinfos_B;
 		sensor_5e3_max_setfile_num = sizeof(sensor_5e3_setfiles_B) / sizeof(sensor_5e3_setfiles_B[0]);
 	} else {
 		err("%s setfile index out of bound, take default (setfile_A)", __func__);
+		sensor_5e3_global = sensor_5e3_setfile_A_Global;
+		sensor_5e3_global_size = sizeof(sensor_5e3_setfile_A_Global) / sizeof(sensor_5e3_setfile_A_Global[0]);
 		sensor_5e3_setfiles = sensor_5e3_setfiles_A;
 		sensor_5e3_setfile_sizes = sensor_5e3_setfile_A_sizes;
 		sensor_5e3_pllinfos = sensor_5e3_pllinfos_A;
 		sensor_5e3_max_setfile_num = sizeof(sensor_5e3_setfiles_A) / sizeof(sensor_5e3_setfiles_A[0]);
 	}
-	
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	cis->use_initial_ae = of_property_read_bool(dnode, "use_initial_ae");
-	probe_info("%s use_initial_ae(%d)\n", __func__, cis->use_initial_ae);
-#endif
-	
+
 	v4l2_i2c_subdev_init(subdev_cis, client, &subdev_ops);
 	v4l2_set_subdevdata(subdev_cis, cis);
 	v4l2_set_subdev_hostdata(subdev_cis, device);

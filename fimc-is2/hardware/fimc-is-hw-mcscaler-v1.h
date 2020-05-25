@@ -84,11 +84,11 @@ int fimc_is_hw_mcsc_set_param(struct fimc_is_hw_ip *hw_ip, struct is_region *reg
 int fimc_is_hw_mcsc_update_param(struct fimc_is_hw_ip *hw_ip,
 	struct scp_param *param, u32 lindex, u32 hindex, u32 instance);
 int fimc_is_hw_mcsc_frame_ndone(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame,
-	u32 instance, bool late_flag);
+	u32 instance, enum ShotErrorType done_type);
 int fimc_is_hw_mcsc_reset(struct fimc_is_hw_ip *hw_ip);
-int fimc_is_hw_mcsc_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_mcsc_load_setfile(struct fimc_is_hw_ip *hw_ip, u32 index,
 	u32 instance, ulong hw_map);
-int fimc_is_hw_mcsc_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_mcsc_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenario,
 	u32 instance, ulong hw_map);
 int fimc_is_hw_mcsc_delete_setfile(struct fimc_is_hw_ip *hw_ip, u32 instance,
 	ulong hw_map);

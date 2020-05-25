@@ -16,6 +16,7 @@
 #include "exynos-fimc-is-sensor.h"
 #include "fimc-is-metadata.h"
 #include "fimc-is-binary.h"
+#include "fimc-is-device-sensor.h"
 
 #define SENSOR_INTERFACE_MAGIC 0xFEDCBA98
 
@@ -66,8 +67,8 @@ enum DIFF_BET_SEN_ISP { /* Set to 0: 3AA 3frame delay, 1: 3AA 4frame delay, 3: M
 
 /* DEVICE SENSOR INTERFACE */
 #define SENSOR_REGISTER_FUNC_ADDR	(DDK_LIB_ADDR + 0x28)
+#define SENSOR_REGISTER_FUNC_ADDR_RTA	(RTA_LIB_ADDR + 0x40)
 typedef int (*register_sensor_interface)(void *itf);
-static const register_sensor_interface register_sensor_itf = (register_sensor_interface)SENSOR_REGISTER_FUNC_ADDR;
 
 struct ae_param {
 	union {
@@ -345,6 +346,7 @@ struct fimc_is_cis_ops {
         int (*cis_init)(struct v4l2_subdev *subdev);
         int (*cis_log_status)(struct v4l2_subdev *subdev);
         int (*cis_group_param_hold)(struct v4l2_subdev *subdev, bool hold);
+        int (*cis_set_global_setting)(struct v4l2_subdev *subdev);
         int (*cis_mode_change)(struct v4l2_subdev *subdev, u32 mode);
         int (*cis_set_size)(struct v4l2_subdev *subdev, cis_shared_data *cis_data);
         int (*cis_stream_on)(struct v4l2_subdev *subdev);
@@ -375,8 +377,11 @@ struct fimc_is_cis_ops {
 	cis_func_type cis_read_sysreg; /* TBD */
 	cis_func_type cis_read_userreg; /* TBD */
 	int (*cis_wait_streamoff)(struct v4l2_subdev *subdev);
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	int (*cis_set_initial_exposure)(struct v4l2_subdev *subdev);
+	int (*cis_wait_streamon)(struct v4l2_subdev *subdev);
+	void (*cis_data_calculation)(struct v4l2_subdev *subdev, u32 mode);
+#ifdef CONFIG_SENSOR_RETENTION_USE
+	int (*cis_retention_prepare)(struct v4l2_subdev *subdev);
+	int (*cis_retention_crc_check)(struct v4l2_subdev *subdev);
 #endif
 };
 
@@ -505,11 +510,21 @@ struct fimc_is_flash_ops {
 	int (*flash_control)(struct v4l2_subdev *subdev, enum flash_mode mode, u32 intensity);
 };
 
+/* OIS */
+struct fimc_is_ois_ops {
+	int (*ois_init)(struct v4l2_subdev *subdev);
+	int (*ois_mode_change)(struct v4l2_subdev *subdev, int mode);
+	int (*ois_shift_compensation)(struct v4l2_subdev *subdev, int position);
+	int (*ois_fw_update)(struct v4l2_subdev *subdev);
+};
+
 /* comapnion */
 struct fimc_is_preprocessor_ops {
 	int (*preprocessor_stream_on)(struct v4l2_subdev *subdev);
 	int (*preprocessor_stream_off)(struct v4l2_subdev *subdev);
-	int (*preprocessor_mode_change)(struct v4l2_subdev *subdev, u32 mode);
+	int (*preprocessor_mode_change)(struct v4l2_subdev *subdev, struct fimc_is_device_sensor *device);
+	int (*preprocessor_debug)(struct v4l2_subdev *subdev);
+	int (*preprocessor_wait_s_input)(struct v4l2_subdev *subdev);
 };
 
 struct fimc_is_sensor_interface;
@@ -682,15 +697,6 @@ struct fimc_is_cis_interface_ops {
 	/* Set sensor 3a mode - OTF/M2M */
 	int (*set_sensor_3a_mode)(struct fimc_is_sensor_interface *itf,
 					u32 mode);
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-	int (*get_initial_exposure_gain_of_sensor)(struct fimc_is_sensor_interface *itf,
-					u32 *long_expo,
-					u32 *long_again,
-					u32 *long_dgain,
-					u32 *short_expo,
-					u32 *short_again,
-					u32 *short_dgain);
-#endif
 	/* DO NOT CHANGE THIS STRUCTURE! - "fimc_is_cis_interface_ops structure"
 	   If the new function is needed, it can be added in "fimc_is_cis_ext_interface_ops"
 	   to keep the backward compatibility */
@@ -812,6 +818,67 @@ struct fimc_is_flash_interface_ops {
 					camera2_shot_t *shot);
 };
 
+/* MIPI-CSI interface */
+enum itf_vc_buf_data_type{
+	VC_BUF_DATA_TYPE_INVALID = -1,
+	VC_BUF_DATA_TYPE_PDAF = 0,
+	VC_BUF_DATA_TYPE_MIPI_STAT,
+	VC_BUF_DATA_TYPE_MAX
+};
+
+struct fimc_is_csi_interface_ops {
+/*********************************************************************
+**********************************************************************
+***
+***	2017-09-12
+***	This interface is changed the parameter in DDK.
+***	But JAVA don't use this interface about PDAF.
+***	So this interface change as the reserved Function.
+***
+***	// JAVA Original
+***	int (*get_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+***				u32 ch,
+***				u32 *frame_count,
+***				u64 *addr);
+***	int (*put_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+***				u32 ch,
+***				u32 index);
+***
+***
+***	// DDK definition
+***	int (*get_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+***				enum itf_vc_buf_data_type data_type,
+***				u32 *buf_index,
+***				u64 *buf_addr,
+***				u32 *frame_count);
+***	int (*put_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+***				enum itf_vc_buf_data_type data_type,
+***				u32 buf_index);
+***	int (*get_vc_dma_buf_size)(struct fimc_is_sensor_interface *itf,
+***				enum itf_vc_buf_data_type data_type,
+***				u32 *width,
+***				u32 *height,
+***				u32 *element_size);
+***	int (*reserved[5])(struct fimc_is_sensor_interface *itf);
+***
+*********************************************************************
+********************************************************************/
+	int (*get_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+				enum itf_vc_buf_data_type data_type,
+				u32 *buf_index,
+				u64 *buf_addr,
+				u32 *frame_count);
+	int (*put_vc_dma_buf)(struct fimc_is_sensor_interface *itf,
+				enum itf_vc_buf_data_type data_type,
+				u32 buf_index);
+	int (*get_vc_dma_buf_size)(struct fimc_is_sensor_interface *itf,
+				enum itf_vc_buf_data_type data_type,
+				u32 *width,
+				u32 *height,
+				u32 *element_size);
+	int (*reserved[5])(struct fimc_is_sensor_interface *itf);
+};
+
 struct fimc_is_sensor_interface {
 	u32					magic;
 	struct fimc_is_cis_interface_ops	cis_itf_ops;
@@ -835,6 +902,7 @@ struct fimc_is_sensor_interface {
 	u32			flash_intensity[NUM_FRAMES];
 	u32			flash_firing_duration[NUM_FRAMES];
 	struct fimc_is_cis_ext_interface_ops	cis_ext_itf_ops;
+	struct fimc_is_csi_interface_ops	csi_itf_ops;
 };
 
 int init_sensor_interface(struct fimc_is_sensor_interface *itf);

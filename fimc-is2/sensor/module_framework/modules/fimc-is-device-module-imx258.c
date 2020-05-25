@@ -40,19 +40,19 @@
 
 static struct fimc_is_sensor_cfg config_module_imx258[] = {
 	/* 4144x3106@30fps */
-	FIMC_IS_SENSOR_CFG(4144, 3106, 30, 28, 0, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(4144, 3106, 30, 24, 0, CSI_DATA_LANES_4),
 	/* 4144x2332@30fps */
-	FIMC_IS_SENSOR_CFG(4144, 2332, 30, 28, 1, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(4144, 2332, 30, 24, 1, CSI_DATA_LANES_4),
 	/* 2072x1552@15fps */
-	FIMC_IS_SENSOR_CFG(2072, 1552, 15, 28, 2, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(2072, 1552, 15, 24, 2, CSI_DATA_LANES_4),
 	/* 2072x1552@30fps */
-	FIMC_IS_SENSOR_CFG(2072, 1552, 30, 28, 3, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(2072, 1552, 30, 24, 3, CSI_DATA_LANES_4),
 	/* 2072x1162@30fps */
-	FIMC_IS_SENSOR_CFG(2072, 1162, 30, 28, 4, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(2072, 1162, 30, 24, 4, CSI_DATA_LANES_4),
 	/* 1008x754@114fps */
-	FIMC_IS_SENSOR_CFG(1008, 754, 114, 28, 5, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(1008, 754, 114, 24, 5, CSI_DATA_LANES_4),
 	/* 1008x568@120fps */
-	FIMC_IS_SENSOR_CFG(1008, 568, 120, 28, 6, CSI_DATA_LANES_4),
+	FIMC_IS_SENSOR_CFG(1008, 568, 120, 24, 6, CSI_DATA_LANES_4),
 };
 
 static struct fimc_is_vci vci_module_imx258[] = {
@@ -95,12 +95,6 @@ static int sensor_module_imx258_power_setpin(struct platform_device *pdev,
 	struct device_node *dnode;
 	int gpio_reset = 0;
 	int gpio_none = 0;
-#ifdef CONFIG_SOC_EXYNOS7870
-	int gpio_camio_1p8_en = 0;
-	int gpio_cam_1p2_en = 0;
-	int gpio_camaf_2p8_en = 0;
-	int gpio_cam_a2p8_en = 0;
-#endif
 
 	BUG_ON(!pdev);
 
@@ -118,136 +112,39 @@ static int sensor_module_imx258_power_setpin(struct platform_device *pdev,
 		gpio_free(gpio_reset);
 	}
 
-#ifdef CONFIG_SOC_EXYNOS7870
-	gpio_camio_1p8_en = of_get_named_gpio(dnode, "gpio_camio_1p8_en", 0);
-	if (!gpio_is_valid(gpio_camio_1p8_en)) {
-		warn("%s failed to get gpio_camio_1p8_en\n",__func__);
-	} else {
-		gpio_request_one(gpio_camio_1p8_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_camio_1p8_en);
-	}
-
-	gpio_cam_1p2_en = of_get_named_gpio(dnode, "gpio_cam_1p2_en", 0);
-	if (!gpio_is_valid(gpio_cam_1p2_en)) {
-		warn("%s failed to get gpio_cam_1p2_en\n", __func__);
-	} else {
-		gpio_request_one(gpio_cam_1p2_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_cam_1p2_en);
-	}
-
-	gpio_camaf_2p8_en = of_get_named_gpio(dnode, "gpio_camaf_2p8_en", 0);
-	if (!gpio_is_valid(gpio_camaf_2p8_en)) {
-		warn("%s failed to get gpio_camaf_2p8_en\n",__func__);
-	} else {
-		gpio_request_one(gpio_camaf_2p8_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_camaf_2p8_en);
-	}
-
-	gpio_cam_a2p8_en = of_get_named_gpio(dnode, "gpio_cam_a2p8_en", 0);
-	if (!gpio_is_valid(gpio_cam_a2p8_en)) {
-		warn("%s failed to get gpio_cam_a2p8_en\n",__func__);
-	} else {
-		gpio_request_one(gpio_cam_a2p8_en, GPIOF_OUT_INIT_LOW, "CAM_GPIO_OUTPUT_LOW");
-		gpio_free(gpio_cam_a2p8_en);
-	}
-#endif
-
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON);
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF);
 
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON);
 	SET_PIN_INIT(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF);
 
-	SET_PIN_INIT(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON);
-	SET_PIN_INIT(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF);
-
-#ifdef CONFIG_SOC_EXYNOS7870
 	/* BACK CAEMRA - POWER ON */
 	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
-	if (gpio_is_valid(gpio_cam_a2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_cam_a2p8_en, "gpio_cam_a2p8_en", PIN_OUTPUT, 1, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD_CAM_SENSOR_A2P8", PIN_REGULATOR, 1, 0);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_cam_1p2_en, "cam_1p2_en", PIN_OUTPUT, 1, 0);
-	if (gpio_is_valid(gpio_camaf_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_camaf_2p8_en, "gpio_camaf_2p8_en", PIN_OUTPUT, 1, 2000);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD_CAM_AF_2P8", PIN_REGULATOR, 1, 2000);
-	}
-	if (gpio_is_valid(gpio_camio_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 1, 2000);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 1, 2000);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 1, 3000);
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst high", PIN_OUTPUT, 1, 5000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD23_CAM_CORE_1P2", PIN_REGULATOR, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 1, 9000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 1, 2000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_none, "pin", PIN_FUNCTION, 2, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_ON, gpio_reset, "sen_rst high", PIN_OUTPUT, 1, 1000);
 
 	/* BACK CAEMRA - POWER OFF */
-	if (gpio_is_valid(gpio_camaf_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_camaf_2p8_en, "gpio_camaf_2p8_en", PIN_OUTPUT, 0, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD_CAM_AF_2P8", PIN_REGULATOR, 0, 0);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 2000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 0, 3000);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 1, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "pin", PIN_FUNCTION, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "delay", PIN_NONE, 0, 1500);
 	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_reset, "sen_rst low", PIN_OUTPUT, 0, 0);
-	if (gpio_is_valid(gpio_camio_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 0, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 0, 0);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_cam_1p2_en, "cam_1p2_en", PIN_OUTPUT, 0, 0);
-	if (gpio_is_valid(gpio_cam_a2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_cam_a2p8_en, "gpio_cam_a2p8_en", PIN_OUTPUT, 0, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD_CAM_SENSOR_A2P8", PIN_REGULATOR, 0, 0);
-	}
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "VDD23_CAM_CORE_1P2", PIN_REGULATOR, 0, 0);
+	SET_PIN(pdata, SENSOR_SCENARIO_NORMAL, GPIO_SCENARIO_OFF, gpio_none, "AVDD24_CAM_2P8", PIN_REGULATOR, 0, 0);
 
 	/* READ_ROM - POWER ON */
-	if (gpio_is_valid(gpio_camaf_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_camaf_2p8_en, "gpio_camaf_2p8_en", PIN_OUTPUT, 1, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDD_CAM_AF_2P8", PIN_REGULATOR, 1, 12000);
-	}
-	if (gpio_is_valid(gpio_camio_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 1, 2000);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 1, 2000);
-	}
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 1, 14000);
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_ON, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 1, 2000);
 
 	/* READ_ROM - POWER OFF */
-	if (gpio_is_valid(gpio_camaf_2p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_camaf_2p8_en, "gpio_camaf_2p8_en", PIN_OUTPUT, 0, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDD_CAM_AF_2P8", PIN_REGULATOR, 0, 0);
-	}
-	if (gpio_is_valid(gpio_camio_1p8_en)) {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 0, 0);
-	} else {
-		SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDDIO_1.8V_CAM", PIN_REGULATOR, 0, 0);
-	}
-
-#if defined(CONFIG_OIS_USE)
-	/* BACK CAMERA - OIS FACTORY ON */
-	if (gpio_is_valid(gpio_ois_pwr_en)) {  /* VDD_OIS_2P8, VDD_OIS_IO_1P8 */
-		SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON, gpio_ois_pwr_en, "ois_pwr_en", PIN_OUTPUT, 1, 2000);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON, gpio_camaf_2p8_en, "camaf_2p8_en", PIN_OUTPUT, 1, 2000);
-	SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 1, 2000);
-	if (gpio_is_valid(gpio_ois_reset)) {  /* OIS_RESET */
-		SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_ON, gpio_ois_reset, "ois_reset", PIN_OUTPUT, 1, 2000);
-	}
-	/* BACK CAMERA - OIS FACTORY OFF */
-	SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF, gpio_camaf_2p8_en, "camaf_2p8_en", PIN_OUTPUT, 0, 10);
-	if (gpio_is_valid(gpio_ois_reset)) {  /* OIS_RESET */
-		SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF, gpio_ois_reset, "ois_reset", PIN_OUTPUT, 0, 10);
-	}
-	SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF, gpio_camio_1p8_en, "camio_1p8_en", PIN_OUTPUT, 0, 2000);
-	if (gpio_is_valid(gpio_ois_pwr_en)) {  /* VDD_OIS_2P8, VDD_OIS_IO_1P8 */
-		SET_PIN(pdata, SENSOR_SCENARIO_OIS_FACTORY, GPIO_SCENARIO_OFF, gpio_ois_pwr_en, "ois_pwr_en", PIN_OUTPUT, 0, 10);
-	}
-#endif
-#endif
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDD28_CAM_AF", PIN_REGULATOR, 0,1000);
+	SET_PIN(pdata, SENSOR_SCENARIO_READ_ROM, GPIO_SCENARIO_OFF, gpio_none, "VDD18_CAM_SENSOR_IO", PIN_REGULATOR, 0, 0);
 
 	dev_info(dev, "%s X v4\n", __func__);
 

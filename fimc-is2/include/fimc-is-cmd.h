@@ -91,15 +91,15 @@ enum is_scenario_id {
 };
 
 enum is_subscenario_id {
-	ISS_SUB_SCENARIO_STILL_PREVIEW = 0,	/* 0: still preview */
-	ISS_SUB_SCENARIO_VIDEO = 1,		/* 1: video */
-	ISS_SUB_SCENARIO_DUAL_STILL = 2,	/* 2: dual still preview */
-	ISS_SUB_SCENARIO_DUAL_VIDEO = 3,	/* 3: dual video */
-	ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED = 4,	/* 4: video high speed */
-	ISS_SUB_SCENARIO_STILL_CAPTURE = 5,	/* 5: still capture */
-	ISS_SUB_SCENARIO_FHD_60FPS = 6,		/* 6: video FHD 60fps */
-	ISS_SUB_SCENARIO_UHD_30FPS = 7,         /* 7: video UHD 30fps */
-	ISS_SUB_SCENARIO_WVGA_300FPS = 8,       /* 8: video WVGA 300fps */
+	ISS_SUB_SCENARIO_STILL_PREVIEW = 0,            /* 0: still preview */
+	ISS_SUB_SCENARIO_VIDEO = 1,                    /* 1: video */
+	ISS_SUB_SCENARIO_DUAL_STILL = 2,               /* 2: dual still preview */
+	ISS_SUB_SCENARIO_DUAL_VIDEO = 3,               /* 3: dual video */
+	ISS_SUB_SCENARIO_VIDEO_HIGH_SPEED = 4,         /* 4: video high speed */
+	ISS_SUB_SCENARIO_STILL_CAPTURE = 5,            /* 5: still capture */
+	ISS_SUB_SCENARIO_FHD_60FPS = 6,                /* 6: video FHD 60fps */
+	ISS_SUB_SCENARIO_UHD_30FPS = 7,                /* 7: video UHD 30fps */
+	ISS_SUB_SCENARIO_WVGA_300FPS = 8,              /* 8: video WVGA 300fps */
 	ISS_SUB_SCENARIO_STILL_PREVIEW_WDR_ON = 9,
 	ISS_SUB_SCENARIO_VIDEO_WDR_ON = 10,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON = 11,
@@ -110,7 +110,7 @@ enum is_subscenario_id {
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON_ZOOM = 16,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON_ZOOM_INDOOR = 17,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON_ZOOM_OUTDOOR = 18,
-	ISS_SUB_SCENARIO_STILL_CAPTURE_LLS = 19,
+	ISS_SUB_SCENARIO_STILL_CAPTURE_LLS = 19,            /* 19: auto LLS  */
 	ISS_SUB_SCENARIO_MERGED_STILL_CAPTURE_WDR_AUTO = ISS_SUB_SCENARIO_STILL_CAPTURE_LLS,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON_LLS = 20,
 	ISS_SUB_SCENARIO_MERGED_STILL_CAPTURE_WDR_ON = ISS_SUB_SCENARIO_STILL_CAPTURE_WDR_ON_LLS,
@@ -125,23 +125,24 @@ enum is_subscenario_id {
 	ISS_SUB_SCENARIO_STILL_CAPTURE_SHARPEN = 29,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_LONG = 30,
 	ISS_SUB_SCENARIO_STILL_CAPTURE_MANUAL_ISO = 31,
-	ISS_SUB_SCENARIO_STILL_PREVIEW_BINNING = 40, /* 40: binning mode for low power */
+	ISS_SUB_SCENARIO_STILL_PREVIEW_BINNING = 40,        /* 40: binning mode for low power */
+	ISS_SUB_SCENARIO_STILL_PREVIEW_LLS = 42,            /* 42: still preview lls */
 	ISS_SUB_END,
 
-	ISS_SUB_SCENARIO_FRONT_VT1 = 31,		/*  31: front camera VT1 */
-	ISS_SUB_SCENARIO_FRONT_VT2 = 32,		/* 32: front camera VT2 */
-	ISS_SUB_SCENARIO_FRONT_SMART_STAY = 33,	/* 33: front camera smart stay */
-	ISS_SUB_SCENARIO_FRONT_PANORAMA = 34,    /* 34: front camera front panorama */
-	ISS_SUB_SCENARIO_FRONT_C2_OFF_STILL_PREVIEW = 35,    /* 35: C2 off front still preview */
-	ISS_SUB_SCENARIO_FRONT_C2_OFF_STILL_CAPTURE = 36,	/* 36: C2 off front still capture */
-	ISS_SUB_SCENARIO_FRONT_C2_OFF_VIDEO = 37,    /* 37: C2 off front video */
-	ISS_SUB_SCENARIO_FRONT_VT4 = 38,		/* 38: front camera VT4 */
-	ISS_SUB_SCENARIO_FRONT_VT1_STILL_CAPTURE = 39,	/* 39: front camera VT1 still capture */
-	ISS_SUB_SCENARIO_FRONT_STILL_PREVIEW_BINNING = 40, /* 40: front camera binning mode for low power */
+	ISS_SUB_SCENARIO_FRONT_VT1 = 31,                    /*  31: front camera VT1 */
+	ISS_SUB_SCENARIO_FRONT_VT2 = 32,                    /* 32: front camera VT2 */
+	ISS_SUB_SCENARIO_FRONT_SMART_STAY = 33,             /* 33: front camera smart stay */
+	ISS_SUB_SCENARIO_FRONT_PANORAMA = 34,               /* 34: front camera front panorama */
+	ISS_SUB_SCENARIO_FRONT_C2_OFF_STILL_PREVIEW = 35,   /* 35: C2 off front still preview */
+	ISS_SUB_SCENARIO_FRONT_C2_OFF_STILL_CAPTURE = 36,   /* 36: C2 off front still capture */
+	ISS_SUB_SCENARIO_FRONT_C2_OFF_VIDEO = 37,           /* 37: C2 off front video */
+	ISS_SUB_SCENARIO_FRONT_VT4 = 38,                    /* 38: front camera VT4 */
+	ISS_SUB_SCENARIO_FRONT_VT1_STILL_CAPTURE = 39,      /* 39: front camera VT1 still capture */
+	ISS_SUB_SCENARIO_FRONT_STILL_PREVIEW_BINNING = 40,  /* 40: front camera binning mode for low power */
+};
 
-	ISS_SUB_SCENARIO_LIVE_OUTFOCUS_PREVIEW = 44,		/* 44 ~ 50: Bokeh (HDR off/auto/on) */
-	ISS_SUB_SCENARIO_LIVE_OUTFOCUS_CAPTURE = 45,
-	ISS_SUB_SCENARIO_LIVE_OUTFOCUS_VIDEO = 46,
+enum is_scenario_is {
+	FIMC_IS_SCENARIO_SWVDIS = 1,
 };
 
 enum is_system_control_id {
@@ -163,7 +164,11 @@ struct is_setfile_header_element {
 	u32 binary_size;
 };
 
+#ifdef CONFIG_USE_SENSOR_GROUP
+#define MAX_ACTIVE_GROUP 6
+#else
 #define MAX_ACTIVE_GROUP 5
+#endif
 struct fimc_is_path_info {
 	u32 sensor_name;
 	u32 mipi_csi;

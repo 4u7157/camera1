@@ -2082,7 +2082,7 @@ int fimc_is_comp_set_voltage(char *volt_name, int uV)
 	static u32 cnt_fail = 0;
 	int ret;
 
-	regulator = regulator_get(NULL, volt_name);
+	regulator = regulator_get_optional(NULL, volt_name);
 	if (IS_ERR_OR_NULL(regulator)) {
 		err("regulator_get fail\n");
 		regulator_put(regulator);

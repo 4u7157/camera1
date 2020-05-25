@@ -254,7 +254,7 @@ void fimc_is_scaler_get_input_img_size(void __iomem *base_addr, u32 hw_id, u32 *
 
 }
 
-void fimc_is_scaler_set_poly_scaler_enable(void __iomem *base_addr, u32 output_id, u32 enable)
+void fimc_is_scaler_set_poly_scaler_enable(void __iomem *base_addr, u32 hw_id, u32 output_id, u32 enable)
 {
 	switch (output_id) {
 	case MCSC_OUTPUT0:
@@ -804,7 +804,7 @@ void fimc_is_scaler_set_swap_mode(void __iomem *base_addr, u32 output_id, u32 sw
 		fimc_is_hw_set_field(base_addr, &mcsc_regs[MCSC_R_WDMA0_SWAP_TABLE], &mcsc_fields[MCSC_F_WDMA0_SWAP_TABLE], swap);
 		break;
 	case MCSC_OUTPUT1:
-		fimc_is_hw_set_field(base_addr, &mcsc_regs[MCSC_R_WDMA1_SWAP_TABLE], &mcsc_fields[MCSC_F_WDMA0_SWAP_TABLE], swap);
+		fimc_is_hw_set_field(base_addr, &mcsc_regs[MCSC_R_WDMA1_SWAP_TABLE], &mcsc_fields[MCSC_F_WDMA1_SWAP_TABLE], swap);
 		break;
 	case MCSC_OUTPUT2:
 		fimc_is_hw_set_field(base_addr, &mcsc_regs[MCSC_R_WDMA2_SWAP_TABLE], &mcsc_fields[MCSC_F_WDMA2_SWAP_TABLE], swap);
@@ -1331,6 +1331,38 @@ void fimc_is_scaler_clear_wdma_addr(void __iomem *base_addr, u32 output_id)
 	}
 }
 
+/* for hwfc */
+void fimc_is_scaler_set_hwfc_auto_clear(void __iomem *base_addr, u32 output_id, bool auto_clear)
+{
+	return;
+}
+
+void fimc_is_scaler_set_hwfc_idx_reset(void __iomem *base_addr, u32 output_id, bool reset)
+{
+	return;
+}
+
+void fimc_is_scaler_set_hwfc_mode(void __iomem *base_addr, u32 hwfc_output_ids)
+{
+	return;
+}
+
+void fimc_is_scaler_set_hwfc_config(void __iomem *base_addr,
+		u32 output_id, u32 format, u32 plane, u32 dma_idx, u32 width, u32 height)
+{
+	return;
+}
+
+u32 fimc_is_scaler_set_hwfc_idx_bin(void __iomem *base_addr, u32 output_id)
+{
+	return 0;
+}
+
+u32 fimc_is_scaler_set_hwfc_cur_idx(void __iomem *base_addr, u32 output_id)
+{
+	return 0;
+}
+
 static void fimc_is_scaler0_clear_intr_src(void __iomem *base_addr, u32 status)
 {
 	if (status & (1 << INTR_MC_SCALER_OUTSTALL))
@@ -1417,4 +1449,18 @@ u32 fimc_is_scaler_get_intr_status(void __iomem *base_addr, u32 hw_id)
 u32 fimc_is_scaler_get_version(void __iomem *base_addr)
 {
 	return fimc_is_hw_get_reg(base_addr, &mcsc_regs[MCSC_R_SCALER_VERSION]);
+}
+
+void fimc_is_scaler_dump(void __iomem *base_addr)
+{
+	u32 i = 0;
+	u32 reg_value = 0;
+
+	info_hw("MCSC ver 2.10");
+
+	for(i = 0; i < MCSC_REG_CNT; i++) {
+		reg_value = readl(base_addr + mcsc_regs[i].sfr_offset);
+		sfrinfo("[DUMP] reg:[%s][0x%04X], value:[0x%08X]\n",
+			mcsc_regs[i].reg_name, mcsc_regs[i].sfr_offset, reg_value);
+	}
 }

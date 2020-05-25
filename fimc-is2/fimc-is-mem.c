@@ -119,7 +119,7 @@ const struct fimc_is_vb2_buf_ops fimc_is_vb2_buf_ops_ion = {
 	.plane_prepare	= fimc_is_vb2_ion_plane_prepare,
 	.plane_finish	= fimc_is_vb2_ion_plane_finish,
 	.buf_prepare	= fimc_is_vb2_ion_buf_prepare,
-	.buf_finish		= fimc_is_vb2_ion_buf_finish,
+	.buf_finish	= fimc_is_vb2_ion_buf_finish,
 };
 
 /* fimc-is private buffer operations */
@@ -153,10 +153,21 @@ static dma_addr_t fimc_is_vb2_ion_dvaddr(struct fimc_is_priv_buf *pbuf)
 	if (!pbuf)
 		return 0;
 
-	if (vb2_ion_dma_address((void *)pbuf->cookie, &dva))
-		err("could not get device addr for @%p", pbuf->cookie);
+	WARN_ON(vb2_ion_dma_address((void *)pbuf->cookie, &dva) != 0);
 
 	return (ulong)dva;
+}
+
+static phys_addr_t fimc_is_vb2_ion_phaddr(struct fimc_is_priv_buf *pbuf)
+{
+	phys_addr_t pa = 0;
+
+	if (!pbuf)
+		return 0;
+
+	WARN_ON(vb2_ion_phys_address((void *)pbuf->cookie, &pa) != 0);
+
+	return pa;
 }
 
 static void fimc_is_vb2_ion_sync_for_device(struct fimc_is_priv_buf *pbuf,
@@ -172,19 +183,21 @@ static void fimc_is_vb2_ion_sync_for_cpu(struct fimc_is_priv_buf *pbuf,
 }
 
 const struct fimc_is_priv_buf_ops fimc_is_priv_buf_ops_ion = {
-	.free				= fimc_is_vb2_ion_free,
-	.kvaddr				= fimc_is_vb2_ion_kvaddr,
-	.dvaddr				= fimc_is_vb2_ion_dvaddr,
+	.free			= fimc_is_vb2_ion_free,
+	.kvaddr			= fimc_is_vb2_ion_kvaddr,
+	.dvaddr			= fimc_is_vb2_ion_dvaddr,
+	.phaddr			= fimc_is_vb2_ion_phaddr,
 	.sync_for_device	= fimc_is_vb2_ion_sync_for_device,
 	.sync_for_cpu		= fimc_is_vb2_ion_sync_for_cpu,
 };
 
 /* fimc-is memory operations */
-static void *fimc_is_vb2_ion_init(struct platform_device *pdev)
+static void *fimc_is_vb2_ion_init(struct platform_device *pdev,
+		long flag)
 {
 	return vb2_ion_create_context(&pdev->dev, SZ_4K,
 			VB2ION_CTX_IOMMU |
-			VB2ION_CTX_VMCONTIG);
+			flag);
 }
 
 static struct fimc_is_priv_buf *fimc_is_vb2_ion_alloc(void *ctx,
@@ -237,10 +250,70 @@ const struct fimc_is_mem_ops fimc_is_mem_ops_ion = {
 	.resume			= fimc_is_vb2_ion_resume,
 	.suspend		= fimc_is_vb2_ion_suspend,
 	.set_cached		= vb2_ion_set_cached,
-	.set_alignment	= vb2_ion_set_alignment,
+	.set_alignment		= vb2_ion_set_alignment,
 	.alloc			= fimc_is_vb2_ion_alloc,
 };
 #endif
+
+
+/* fimc-is private buffer operations */
+static void fimc_is_vb2_km_free(struct fimc_is_priv_buf *pbuf)
+{
+	kfree(pbuf->kvaddr);
+	kfree(pbuf);
+}
+
+static ulong fimc_is_vb2_km_kvaddr(struct fimc_is_priv_buf *pbuf)
+{
+	if (!pbuf)
+		return 0;
+
+	return (ulong)pbuf->kvaddr;
+}
+
+static phys_addr_t fimc_is_vb2_km_phaddr(struct fimc_is_priv_buf *pbuf)
+{
+	phys_addr_t pa = 0;
+
+	if (!pbuf)
+		return 0;
+
+	pa = virt_to_phys(pbuf->kvaddr);
+
+	return pa;
+}
+const struct fimc_is_priv_buf_ops fimc_is_priv_buf_ops_km = {
+	.free			= fimc_is_vb2_km_free,
+	.kvaddr			= fimc_is_vb2_km_kvaddr,
+	.phaddr			= fimc_is_vb2_km_phaddr,
+};
+
+static struct fimc_is_priv_buf *fimc_is_kmalloc(size_t size, size_t align)
+{
+	struct fimc_is_priv_buf *buf = NULL;
+	int ret = 0;
+
+	buf = kzalloc(sizeof(*buf), GFP_KERNEL);
+	if (!buf)
+		return ERR_PTR(-ENOMEM);
+
+	buf->kvaddr = kzalloc(DEBUG_REGION_SIZE + 0x10, GFP_KERNEL);
+	if (!buf->kvaddr) {
+		ret = -ENOMEM;
+		goto err_priv_alloc;
+	}
+
+	buf->size = size;
+	buf->align = align;
+	buf->ops = &fimc_is_priv_buf_ops_km;
+
+	return buf;
+
+err_priv_alloc:
+	kfree(buf);
+
+	return ERR_PTR(ret);
+}
 
 int fimc_is_mem_init(struct fimc_is_mem *mem, struct platform_device *pdev)
 {
@@ -248,15 +321,25 @@ int fimc_is_mem_init(struct fimc_is_mem *mem, struct platform_device *pdev)
 	mem->fimc_is_mem_ops = &fimc_is_mem_ops_ion;
 	mem->vb2_mem_ops = &vb2_ion_memops;
 	mem->fimc_is_vb2_buf_ops = &fimc_is_vb2_buf_ops_ion;
+	mem->kmalloc = &fimc_is_kmalloc;
 #endif
 
-	mem->default_ctx = CALL_PTR_MEMOP(mem, init, pdev);
+	mem->default_ctx = CALL_PTR_MEMOP(mem, init, pdev, VB2ION_CTX_VMCONTIG);
 	if (IS_ERR_OR_NULL(mem->default_ctx)) {
 		if (IS_ERR(mem->default_ctx))
 			return PTR_ERR(mem->default_ctx);
 		else
 			return -EINVAL;
 	}
+
+	mem->phcontig_ctx = CALL_PTR_MEMOP(mem, init, pdev, VB2ION_CTX_PHCONTIG);
+	if (IS_ERR_OR_NULL(mem->phcontig_ctx)) {
+		if (IS_ERR(mem->phcontig_ctx))
+			return PTR_ERR(mem->phcontig_ctx);
+		else
+			return -EINVAL;
+	}
+
 
 	return 0;
 }

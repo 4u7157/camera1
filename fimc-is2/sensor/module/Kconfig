@@ -61,18 +61,6 @@ config CAMERA_SENSOR_5E3_OBJ
         default n
         help
           Use to build 5E3 camera sensor.
-config CAMERA_SENSOR_5E6_OBJ
-        bool "Use 5E6 camera sensor"
-        depends on CAMERA_MODULE_SELECT
-        default n
-        help
-          Use to build 5E6 camera sensor.
-config CAMERA_SENSOR_5F1_OBJ
-        bool "Use 5F1 camera sensor"
-        depends on CAMERA_MODULE_SELECT
-        default n
-        help
-          Use to build 5F1 camera sensor.
 config CAMERA_SENSOR_IMX135_OBJ
         bool "Use IMX135 camera sensor"
         depends on CAMERA_MODULE_SELECT
@@ -127,6 +115,12 @@ config CAMERA_SENSOR_2P3_OBJ
         default n
         help
           Use to build 2P3 camera sensor.
+config CAMERA_SENSOR_2L1_OBJ
+        bool "Use 2L1 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build 2L1 camera sensor.
 config CAMERA_SENSOR_3H5_OBJ
         bool "Use 3H5 camera sensor"
         depends on CAMERA_MODULE_SELECT
@@ -187,18 +181,6 @@ config CAMERA_SENSOR_SR261_OBJ
         default n
         help
           Use to build SR261 camera sensor.
-config CAMERA_SENSOR_SR352_OBJ
-        bool "Use SR352 camera sensor"
-        depends on CAMERA_MODULE_SELECT
-        default n
-        help
-          Use to build SR352 camera sensor.
-config CAMERA_SENSOR_SR130PC20_OBJ
-        bool "Use SR130PC20 camera sensor"
-        depends on CAMERA_MODULE_SELECT
-        default n
-        help
-          Use to build SR130PC20 camera sensor.
 config CAMERA_SENSOR_4E6_OBJ
         bool "Use 4E6 camera sensor"
         depends on CAMERA_MODULE_SELECT
@@ -223,9 +205,46 @@ config CAMERA_SENSOR_5E2_OBJ
         default n
         help
           Use to build 5E2 camera sensor.
-config CAMERA_USE_SOC_SENSOR
-        bool "Use soc camera sensor"
+config CAMERA_SENSOR_DSIM_OBJ
+        bool "Use DSIM as an input source of CSIS"
         depends on CAMERA_MODULE_SELECT
         default n
         help
-          Use to build SOC(SR352,SR130PC20) camera sensor.
+         Use DSIM as an input source of CSIS
+
+config CAMERA_SENSOR_VIRTUAL_OBJ
+        bool "Use Virtual sensor as an input source of CSIS"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+         Use Virtual sensor as an input source of CSIS
+config CAMERA_SENSOR_3P3_OBJ
+        bool "Use 3P3 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build 3P3 camera sensor.
+ config CAMERA_SENSOR_5E6_OBJ
+        bool "Use 5E6 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build 5E6 camera sensor.
+config CAMERA_SENSOR_4EC_OBJ
+        bool "Use 4EC camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build 4EC camera sensor
+config CAMERA_SENSOR_SR200_OBJ
+        bool "Use SR200 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build SR200 camera sensor
+config CAMERA_SENSOR_SR200_JAVA_OBJ
+        bool "Use SR200 camera sensor"
+        depends on CAMERA_MODULE_SELECT
+        default n
+        help
+          Use to build SR200 camera sensor

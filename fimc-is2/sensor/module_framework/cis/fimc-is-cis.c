@@ -61,6 +61,9 @@ int sensor_cis_set_registers(struct v4l2_subdev *subdev, const u32 *regs, const 
 	int i = 0;
 	struct fimc_is_cis *cis;
 	struct i2c_client *client;
+	int index_str = 0, index_next = 0;
+	int burst_num = 1;
+	u16 *addr_str = NULL;
 
 	BUG_ON(!subdev);
 	BUG_ON(!regs);
@@ -81,29 +84,121 @@ int sensor_cis_set_registers(struct v4l2_subdev *subdev, const u32 *regs, const 
 
 	msleep(3);
 
-	for (i = 0; i < size; i += I2C_WRITE) {
-		if (regs[i + I2C_ADDR] == 0xFFFF) {
-			msleep(regs[i + I2C_BYTE]);
-		} else if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR8_DATA8) {
-			ret = fimc_is_sensor_addr8_write8(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
-			if (ret < 0) {
-				err("fimc_is_sensor_addr8_write8 fail, ret(%d), addr(%#x), data(%#x)",
-						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+	for (i = 0; i < size; i += I2C_NEXT) {
+		switch (regs[i + I2C_ADDR]) {
+		case I2C_MODE_BURST_ADDR:
+			index_str = i;
+			break;
+		case I2C_MODE_BURST_DATA:
+			index_next = i + I2C_NEXT;
+			if ((index_next < size) && (I2C_MODE_BURST_DATA == regs[index_next + I2C_ADDR])) {
+				burst_num++;
 				break;
 			}
-		} else if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR16_DATA8) {
-			ret = fimc_is_sensor_write8(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+
+			addr_str = (u16 *)&regs[index_str + I2C_NEXT + I2C_DATA];
+			ret = fimc_is_sensor_write16_burst(client, regs[index_str + I2C_DATA], addr_str, burst_num);
 			if (ret < 0) {
-				err("fimc_is_sensor_write8 fail, ret(%d), addr(%#x), data(%#x)",
+				err("fimc_is_sensor_write16_burst fail, ret(%d), addr(%#x), data(%#x)",
 						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+			}
+			burst_num = 1;
+			break;
+		case I2C_MODE_DELAY:
+			usleep_range(regs[i + I2C_DATA], regs[i + I2C_DATA]);
+			break;
+		default:
+			if (regs[i + I2C_BYTE] == 0x1) {
+				ret = fimc_is_sensor_write8(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write8 fail, ret(%d), addr(%#x), data(%#x)",
+							ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
+			} else if (regs[i + I2C_BYTE] == 0x2) {
+				ret = fimc_is_sensor_write16(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write16 fail, ret(%d), addr(%#x), data(%#x)",
+						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
+			}
+		}
+	}
+
+#if (CIS_TEST_PATTERN_MODE != 0)
+	ret = fimc_is_sensor_write8(client, 0x0601, CIS_TEST_PATTERN_MODE);
+#endif
+
+	dbg_sensor("[%s] sensor setting done\n", __func__);
+
+p_err:
+	return ret;
+}
+
+int sensor_cis_set_registers_addr8(struct v4l2_subdev *subdev, const u32 *regs, const u32 size)
+{
+	int ret = 0;
+	int i = 0;
+	struct fimc_is_cis *cis;
+	struct i2c_client *client;
+	int index_str = 0, index_next = 0;
+	int burst_num = 1;
+	u16 *addr_str = NULL;
+
+	BUG_ON(!subdev);
+	BUG_ON(!regs);
+
+	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
+	if (!cis) {
+		err("cis is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	client = cis->client;
+	if (unlikely(!client)) {
+		err("client is NULL");
+		ret = -EINVAL;
+		goto p_err;
+	}
+
+	msleep(3);
+
+	for (i = 0; i < size; i += I2C_NEXT) {
+		switch (regs[i + I2C_ADDR]) {
+		case I2C_MODE_BURST_ADDR:
+			index_str = i;
+			break;
+		case I2C_MODE_BURST_DATA:
+			index_next = i + I2C_NEXT;
+			if ((index_next < size) && (I2C_MODE_BURST_DATA == regs[index_next + I2C_ADDR])) {
+				burst_num++;
 				break;
 			}
-		} else if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR16_DATA16) {
-			ret = fimc_is_sensor_write16(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+
+			addr_str = (u16 *)&regs[index_str + I2C_NEXT + I2C_DATA];
+			ret = fimc_is_sensor_write16_burst(client, regs[index_str + I2C_DATA], addr_str, burst_num);
 			if (ret < 0) {
-				err("fimc_is_sensor_write16 fail, ret(%d), addr(%#x), data(%#x)",
+				err("fimc_is_sensor_write16_burst fail, ret(%d), addr(%#x), data(%#x)",
 						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
-				break;
+			}
+			burst_num = 1;
+			break;
+		case I2C_MODE_DELAY:
+			usleep_range(regs[i + I2C_DATA], regs[i + I2C_DATA]);
+			break;
+		default:
+			if (regs[i + I2C_BYTE] == 0x1) {
+				ret = fimc_is_sensor_addr8_write8(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write8 fail, ret(%d), addr(%#x), data(%#x)",
+							ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
+			} else if (regs[i + I2C_BYTE] == 0x2) {
+				ret = fimc_is_sensor_write16(client, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				if (ret < 0) {
+					err("fimc_is_sensor_write16 fail, ret(%d), addr(%#x), data(%#x)",
+						ret, regs[i + I2C_ADDR], regs[i + I2C_DATA]);
+				}
 			}
 		}
 	}
@@ -237,7 +332,6 @@ int sensor_cis_dump_registers(struct v4l2_subdev *subdev, const u32 *regs, const
 	struct fimc_is_cis *cis;
 	struct i2c_client *client;
 	u8 data8 = 0;
-	u16 data16 = 0;
 
 	BUG_ON(!subdev);
 	BUG_ON(!regs);
@@ -256,32 +350,13 @@ int sensor_cis_dump_registers(struct v4l2_subdev *subdev, const u32 *regs, const
 		goto p_err;
 	}
 
-	for (i = 0; i < size; i += I2C_WRITE) {
-		if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR8_DATA8) {
-			ret = fimc_is_sensor_addr8_read8(client, regs[i + I2C_ADDR], &data8);
-			if (ret < 0) {
-				err("fimc_is_sensor_addr8_read8 fail, ret(%d), addr(%#x)",
-						ret, regs[i + I2C_ADDR]);
-			} else {
-				pr_err("[SEN:DUMP] [%#x] : %x\n", regs[i + I2C_ADDR], data8);
-			}
-		} else if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR16_DATA8) {
-			ret = fimc_is_sensor_read8(client, regs[i + I2C_ADDR], &data8);
-			if (ret < 0) {
-				err("fimc_is_sensor_read8 fail, ret(%d), addr(%#x)",
-						ret, regs[i + I2C_ADDR]);
-			} else {
-				pr_err("[SEN:DUMP] [%#x] : %x\n", regs[i + I2C_ADDR], data8);
-			}
-		} else if (regs[i + I2C_BYTE] == I2C_WRITE_ADDR16_DATA16) {
-			ret = fimc_is_sensor_read16(client, regs[i + I2C_ADDR], &data16);
-			if (ret < 0) {
-				err("fimc_is_sensor_read16 fail, ret(%d), addr(%#x)",
-						ret, regs[i + I2C_ADDR]);
-			} else {
-				pr_err("[SEN:DUMP] [%#x] : %x\n", regs[i + I2C_ADDR], data16);
-			}
+	for (i = 0; i < size; i += I2C_NEXT) {
+		ret = fimc_is_sensor_read8(client, regs[i + I2C_ADDR], &data8);
+		if (ret < 0) {
+			err("fimc_is_sensor_write8 fail, ret(%d), addr(%#x)",
+					ret, regs[i + I2C_ADDR]);
 		}
+		pr_err("[SEN:DUMP] [%#x] : %x\n", regs[i + I2C_ADDR], data8);
 	}
 
 p_err:
@@ -352,30 +427,10 @@ int sensor_cis_wait_streamoff(struct v4l2_subdev *subdev)
 				cis->id, __func__, sensor_fcount, wait_cnt, time_out_cnt);
 	}
 
+#ifdef CONFIG_SENSOR_RETENTION_USE
+	/* retention mode CRC wait calculation */
+	usleep_range(1000, 1000);
+#endif
 p_err:
 	return ret;
 }
-
-#ifdef USE_FACE_UNLOCK_AE_AWB_INIT
-int sensor_cis_set_initial_exposure(struct v4l2_subdev *subdev)
-{
-	struct fimc_is_cis *cis;
-
-	cis = (struct fimc_is_cis *)v4l2_get_subdevdata(subdev);
-	if (unlikely(!cis)) {
-		err("cis is NULL");
-		return -EINVAL;
-	}
-
-	if (cis->use_initial_ae) {
-		cis->init_ae_setting = cis->last_ae_setting;
-
-		dbg_sensor(1, "[MOD:D:%d] %s short(exp:%d/again:%d/dgain:%d), long(exp:%d/again:%d/dgain:%d)\n",
-			cis->id, __func__, cis->init_ae_setting.exposure, cis->init_ae_setting.analog_gain,
-			cis->init_ae_setting.digital_gain, cis->init_ae_setting.long_exposure,
-			cis->init_ae_setting.long_analog_gain, cis->init_ae_setting.long_digital_gain);
-	}
-
-	return 0;
-}
-#endif

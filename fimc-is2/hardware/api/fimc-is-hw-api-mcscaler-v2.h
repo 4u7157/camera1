@@ -23,6 +23,35 @@
 
 #define MCSC_SETFILE_VERSION	0x14027431
 
+enum mcsc_filter_coeff {
+	MCSC_COEFF_x8_8 = 0,	/* A (8/8 ~ ) */
+	MCSC_COEFF_x7_8 = 1,	/* B (7/8 ~ ) */
+	MCSC_COEFF_x6_8 = 2,	/* C (6/8 ~ ) */
+	MCSC_COEFF_x5_8 = 3,	/* D (5/8 ~ ) */
+	MCSC_COEFF_x4_8 = 4,	/* E (4/8 ~ ) */
+	MCSC_COEFF_x3_8 = 5,	/* F (3/8 ~ ) */
+	MCSC_COEFF_x2_8 = 6,	/* G (2/8 ~ ) */
+	MCSC_COEFF_MAX
+};
+
+struct mcsc_v_coef {
+	int v_coef_a[9];
+	int v_coef_b[9];
+	int v_coef_c[9];
+	int v_coef_d[9];
+};
+
+struct mcsc_h_coef {
+	int h_coef_a[9];
+	int h_coef_b[9];
+	int h_coef_c[9];
+	int h_coef_d[9];
+	int h_coef_e[9];
+	int h_coef_f[9];
+	int h_coef_g[9];
+	int h_coef_h[9];
+};
+
 void fimc_is_scaler_start(void __iomem *base_addr, u32 hw_id);
 void fimc_is_scaler_stop(void __iomem *base_addr, u32 hw_id);
 
@@ -41,7 +70,7 @@ void fimc_is_scaler_set_dither(void __iomem *base_addr, u32 hw_id, bool dither_e
 void fimc_is_scaler_set_input_img_size(void __iomem *base_addr, u32 hw_id, u32 width, u32 height);
 void fimc_is_scaler_get_input_img_size(void __iomem *base_addr, u32 hw_id, u32 *width, u32 *height);
 
-void fimc_is_scaler_set_poly_scaler_enable(void __iomem *base_addr, u32 output_id, u32 enable);
+void fimc_is_scaler_set_poly_scaler_enable(void __iomem *base_addr, u32 hw_id, u32 output_id, u32 enable);
 void fimc_is_scaler_set_poly_scaler_bypass(void __iomem *base_addr, u32 output_id, u32 bypass);
 void fimc_is_scaler_set_poly_src_size(void __iomem *base_addr, u32 output_id, u32 pos_x, u32 pos_y, u32 width, u32 height);
 void fimc_is_scaler_get_poly_src_size(void __iomem *base_addr, u32 output_id, u32 *width, u32 *height);
@@ -89,9 +118,19 @@ void fimc_is_scaler_set_wdma_addr(void __iomem *base_addr, u32 output_id, u32 y_
 void fimc_is_scaler_clear_rdma_addr(void __iomem *base_addr);
 void fimc_is_scaler_clear_wdma_addr(void __iomem *base_addr, u32 output_id);
 
+/* for hwfc */
+void fimc_is_scaler_set_hwfc_auto_clear(void __iomem *base_addr, u32 output_id, bool auto_clear);
+void fimc_is_scaler_set_hwfc_idx_reset(void __iomem *base_addr, u32 output_id, bool reset);
+void fimc_is_scaler_set_hwfc_mode(void __iomem *base_addr, u32 hwfc_output_ids);
+void fimc_is_scaler_set_hwfc_config(void __iomem *base_addr,
+		u32 output_id, u32 format, u32 plane, u32 dma_idx, u32 width, u32 height);
+u32 fimc_is_scaler_get_hwfc_idx_bin(void __iomem *base_addr, u32 output_id);
+u32 fimc_is_scaler_get_hwfc_cur_idx(void __iomem *base_addr, u32 output_id);
+
 void fimc_is_scaler_clear_intr_src(void __iomem *base_addr, u32 hw_id, u32 status);
 u32 fimc_is_scaler_get_intr_mask(void __iomem *base_addr, u32 hw_id);
 u32 fimc_is_scaler_get_intr_status(void __iomem *base_addr, u32 hw_id);
 
 u32 fimc_is_scaler_get_version(void __iomem *base_addr);
+void fimc_is_scaler_dump(void __iomem *base_addr);
 #endif

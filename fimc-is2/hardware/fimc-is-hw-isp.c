@@ -10,6 +10,7 @@
 
 #include "fimc-is-hw-3aa.h"
 #include "fimc-is-hw-isp.h"
+#include "fimc-is-err.h"
 
 extern struct fimc_is_lib_support gPtr_lib_support;
 
@@ -94,7 +95,6 @@ int fimc_is_hw_isp_init(struct fimc_is_hw_ip *hw_ip, struct fimc_is_group *group
 
 	hw_isp = (struct fimc_is_hw_isp *)hw_ip->priv_info;
 	instance = group->instance;
-	hw_ip->group[instance] = group;
 
 	if (hw_isp->lib_func == NULL) {
 #ifdef ENABLE_FPSIMD_FOR_USER
@@ -250,11 +250,14 @@ int fimc_is_hw_isp_disable(struct fimc_is_hw_ip *hw_ip, u32 instance, ulong hw_m
 	if (test_bit(HW_RUN, &hw_ip->state)) {
 		/* TODO: need to kthread_flush when isp use task */
 		fimc_is_lib_isp_stop(hw_ip, &hw_isp->lib[instance], instance);
-		clear_bit(HW_RUN, &hw_ip->state);
 	} else {
 		dbg_hw("[%d]already disabled (%d)\n", instance, hw_ip->id);
 	}
 
+	if (atomic_read(&hw_ip->rsccount) > 1)
+		return 0;
+
+	clear_bit(HW_RUN, &hw_ip->state);
 	clear_bit(HW_CONFIG, &hw_ip->state);
 
 	return ret;
@@ -269,6 +272,7 @@ int fimc_is_hw_isp_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame
 	struct is_region *region;
 	struct isp_param *param;
 	u32 lindex, hindex;
+	bool frame_done = false;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!frame);
@@ -283,7 +287,8 @@ int fimc_is_hw_isp_shot(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame
 	if (!test_bit_variables(hw_ip->id, &hw_map))
 		return 0;
 
-	if ((!fimc_is_hw_frame_done_with_dma())
+	fimc_is_hw_g_ctrl(hw_ip, hw_ip->id, HW_G_CTRL_FRM_DONE_WITH_DMA, (void *)&frame_done);
+	if ((!frame_done)
 		|| (!test_bit(ENTRY_IXC, &frame->out_flag) && !test_bit(ENTRY_IXP, &frame->out_flag)))
 		set_bit(hw_ip->id, &frame->core_flag);
 
@@ -385,6 +390,12 @@ config:
 			BUG_ON(!hw_ip_3aa->priv_info);
 			hw_3aa = (struct fimc_is_hw_3aa *)hw_ip_3aa->priv_info;
 			param_set->taa_param = &hw_3aa->param_set[frame->instance];
+			/* When the ISP shot is requested, DDK needs to know the size fo 3AA.
+			   This is because DDK calculates the position of the cropped image
+			   from the 3AA size. */
+			fimc_is_hw_3aa_update_param(hw_ip,
+				region, param_set->taa_param,
+				lindex, hindex, frame->instance);
 		}
 	}
 
@@ -487,11 +498,10 @@ int fimc_is_hw_isp_get_meta(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *f
 }
 
 int fimc_is_hw_isp_frame_ndone(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame *frame,
-	u32 instance, bool late_flag)
+	u32 instance, enum ShotErrorType done_type)
 {
 	int ret = 0;
 	int wq_id_ixc, wq_id_ixp, output_id;
-	enum fimc_is_frame_done_type done_type;
 
 	BUG_ON(!hw_ip);
 	BUG_ON(!frame);
@@ -511,30 +521,25 @@ int fimc_is_hw_isp_frame_ndone(struct fimc_is_hw_ip *hw_ip, struct fimc_is_frame
 		break;
 	}
 
-	if (late_flag == true)
-		done_type = FRAME_DONE_LATE_SHOT;
-	else
-		done_type = FRAME_DONE_FORCE;
-
 	output_id = ENTRY_IXC;
 	if (test_bit(output_id, &frame->out_flag))
 		ret = fimc_is_hardware_frame_done(hw_ip, frame, wq_id_ixc,
-				output_id, 1, done_type);
+				output_id, done_type);
 
 	output_id = ENTRY_IXP;
 	if (test_bit(output_id, &frame->out_flag))
 		ret = fimc_is_hardware_frame_done(hw_ip, frame, wq_id_ixp,
-				output_id, 1, done_type);
+				output_id, done_type);
 
 	output_id = FIMC_IS_HW_CORE_END;
 	if (test_bit(hw_ip->id, &frame->core_flag))
 		ret = fimc_is_hardware_frame_done(hw_ip, frame, -1,
-				output_id, 1, done_type);
+				output_id, done_type);
 
 	return ret;
 }
 
-int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, u32 index,
 	u32 instance, ulong hw_map)
 {
 	int flag = 0, ret = 0;
@@ -557,7 +562,7 @@ int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 		return -ESRCH;
 	}
 
-	switch (hw_ip->setfile_info.version) {
+	switch (hw_ip->setfile.version) {
 	case SETFILE_V2:
 		flag = false;
 		break;
@@ -566,7 +571,7 @@ int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 		break;
 	default:
 		err_hw("[%d][ID:%d] invalid version (%d)", instance, hw_ip->id,
-			hw_ip->setfile_info.version);
+			hw_ip->setfile.version);
 		return -EINVAL;
 		break;
 	}
@@ -574,17 +579,18 @@ int fimc_is_hw_isp_load_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 	BUG_ON(!hw_ip->priv_info);
 	hw_isp = (struct fimc_is_hw_isp *)hw_ip->priv_info;
 
-	addr = hw_ip->setfile_info.table[index].addr;
-	size = hw_ip->setfile_info.table[index].size;
+	addr = hw_ip->setfile.table[index].addr;
+	size = hw_ip->setfile.table[index].size;
 	ret = fimc_is_lib_isp_create_tune_set(&hw_isp->lib[instance],
-		addr, size, (u32)index, flag, instance);
+		addr, size, index, flag, instance);
 
 	set_bit(HW_TUNESET, &hw_ip->state);
+	set_bit(index, &hw_isp->lib[instance].tune_count);
 
 	return ret;
 }
 
-int fimc_is_hw_isp_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
+int fimc_is_hw_isp_apply_setfile(struct fimc_is_hw_ip *hw_ip, u32 scenario,
 	u32 instance, ulong hw_map)
 {
 	int ret = 0;
@@ -606,12 +612,18 @@ int fimc_is_hw_isp_apply_setfile(struct fimc_is_hw_ip *hw_ip, int index,
 		return -ESRCH;
 	}
 
-	if (hw_ip->setfile_info.num == 0)
+	if (hw_ip->setfile.using_count == 0)
 		return 0;
 
-	setfile_index = hw_ip->setfile_info.index[index];
+	setfile_index = hw_ip->setfile.index[scenario];
+	if (setfile_index >= hw_ip->setfile.using_count) {
+		err_hw("[%d][ID:%d] setfile index is out-of-range, [%d:%d]",
+				instance, hw_ip->id, scenario, setfile_index);
+		return -EINVAL;
+	}
+
 	info_hw("[%d][ID:%d] setfile (%d) scenario (%d)\n", instance, hw_ip->id,
-		setfile_index, index);
+		setfile_index, scenario);
 
 	BUG_ON(!hw_ip->priv_info);
 	hw_isp = (struct fimc_is_hw_isp *)hw_ip->priv_info;
@@ -641,15 +653,19 @@ int fimc_is_hw_isp_delete_setfile(struct fimc_is_hw_ip *hw_ip, u32 instance, ulo
 		return 0;
 	}
 
-	if (hw_ip->setfile_info.num == 0)
+	if (hw_ip->setfile.using_count == 0)
 		return 0;
 
 	BUG_ON(!hw_ip->priv_info);
 	hw_isp = (struct fimc_is_hw_isp *)hw_ip->priv_info;
 
-	for (i = 0; i < hw_ip->setfile_info.num; i++)
-		ret = fimc_is_lib_isp_delete_tune_set(&hw_isp->lib[instance],
+	for (i = 0; i < hw_ip->setfile.using_count; i++) {
+		if (test_bit(i, &hw_isp->lib[instance].tune_count)) {
+			ret = fimc_is_lib_isp_delete_tune_set(&hw_isp->lib[instance],
 				(u32)i, instance);
+			clear_bit(i, &hw_isp->lib[instance].tune_count);
+		}
+	}
 
 	clear_bit(HW_TUNESET, &hw_ip->state);
 

@@ -33,6 +33,7 @@
 struct fimc_is_lib_isp {
 	void				*object;
 	struct lib_interface_func	*func;
+	ulong				tune_count;
 };
 
 enum lib_cb_event_type {
@@ -42,6 +43,14 @@ enum lib_cb_event_type {
 	LIB_EVENT_DMA_A_OUT_DONE	= 4,
 	LIB_EVENT_DMA_B_OUT_DONE	= 5,
 	LIB_EVENT_FRAME_START_ISR	= 6,
+	LIB_EVENT_ERROR_CIN_OVERFLOW	= 7,
+	LIB_EVENT_ERROR_CIN_COLUMN	= 8,
+	LIB_EVENT_ERROR_CIN_LINE	= 9,
+	LIB_EVENT_ERROR_CIN_TOTAL_SIZE	= 10,
+	LIB_EVENT_ERROR_COUT_OVERFLOW	= 11,
+	LIB_EVENT_ERROR_COUT_COLUMN	= 12,
+	LIB_EVENT_ERROR_COUT_LINE	= 13,
+	LIB_EVENT_ERROR_COUT_TOTAL_SIZE	= 14,
 	LIB_EVENT_END
 };
 
@@ -98,6 +107,21 @@ struct isp_param_set {
 	u32				output_dva_chunk;
 	u32				output_dva_yuv;
 	u32				instance_id;
+	u32				fcount;
+	bool				reprocessing;
+};
+
+struct tpu_param_set {
+	struct param_control		control;
+	struct param_tpu_config		config;
+	struct param_otf_input		otf_input;
+	struct param_dma_input		dma_input;
+	struct param_otf_output		otf_output;
+	struct param_dma_output		dma_output;
+	u32				input_dva;
+	u32				output_dva;
+
+	u32 				instance_id;
 	u32				fcount;
 	bool				reprocessing;
 };
@@ -186,7 +210,7 @@ int fimc_is_lib_isp_apply_tune_set(struct fimc_is_lib_isp *this,
 int fimc_is_lib_isp_delete_tune_set(struct fimc_is_lib_isp *this,
 	u32 index, u32 instance_id);
 int fimc_is_lib_isp_load_cal_data(struct fimc_is_lib_isp *this,
-	u32 index, ulong addr, u32 cal_index);
+	u32 index, ulong addr);
 int fimc_is_lib_isp_get_cal_data(struct fimc_is_lib_isp *this,
 	u32 instance_id, struct cal_info *data, int type);
 int fimc_is_lib_isp_sensor_info_mode_chg(struct fimc_is_lib_isp *this,

@@ -140,7 +140,7 @@ enum optical_stabilization_mode {
 	OPTICAL_STABILIZATION_MODE_SINE_Y,
 	OPTICAL_STABILIZATION_MODE_CENTERING,
 	OPTICAL_STABILIZATION_MODE_VDIS,
-	OPTICAL_STABILIZATION_MODE_VIDEO_RATIO_4_3,
+	OPTICAL_STABILIZATION_MODE_VIDEO_RATIO_4_3, // Recording mode(VGA)
 };
 
 enum lens_state {
@@ -750,7 +750,7 @@ enum aa_scene_mode {
 	AA_SCENE_MODE_HIGH_SPEED_VIDEO,
 	AA_SCENE_MODE_HDR,
 	AA_SCENE_MODE_FACE_PRIORITY_LOW_LIGHT,
-	A_SCENE_MODE_MANUAL_MFHDR,
+	AA_SCENE_MODE_MANUAL_MFHDR,
 
 	/* vendor feature */
 	AA_SCENE_MODE_NIGHT_CAPTURE = 100,
@@ -775,7 +775,6 @@ enum aa_scene_mode {
 	AA_SCENE_MODE_THERMAL,
 	AA_SCENE_MODE_VIDEO_COLLAGE,
 	AA_SCENE_MODE_PRO_MODE,
-	AA_SCENE_MODE_FACE_LOCK,
 };
 
 enum aa_effect_mode {
@@ -1028,9 +1027,9 @@ struct camera2_aa_ctl {
 	uint32_t			vendor_captureCount;
 	uint32_t			vendor_captureExposureTime;
 #if defined(USE_MFHDR_CAMERA_INTERFACE)
-    uint32_t            vendor_expBracketingCount;
-    float               vendor_expBracketing[15];
-    float               vendor_expBracketingCapture;
+	uint32_t			vendor_expBracketingCount;
+	float				vendor_expBracketing[15];
+	float				vendor_expBracketingCapture;
 #endif
 	/*For control brightness of front flash led*/
 	enum aa_ae_frontflash_brightness vendor_aeFrontFlashBrightness;
@@ -1078,9 +1077,9 @@ struct camera2_aa_dm {
 	uint32_t			vendor_captureCount;
 	uint32_t			vendor_captureExposureTime;
 #if defined(USE_MFHDR_CAMERA_INTERFACE)
-    uint32_t            vendor_expBracketingCount;
-    float               vendor_expBracketing[15];
-    float               vendor_expBracketingCapture;
+	uint32_t			vendor_expBracketingCount;
+	float				vendor_expBracketing[15];
+	float				vendor_expBracketingCapture;
 #endif
 	uint32_t			vendor_reserved[10];
 };

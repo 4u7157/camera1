@@ -103,6 +103,9 @@ void tasklet_flite_str_otf(unsigned long data)
 		goto trigger_skip;
 	}
 
+	if (group_3aa->sync_shots == 0)
+		goto trigger_skip;
+
 	if (unlikely(list_empty(&group_3aa->smp_trigger.wait_list))) {
 		atomic_set(&group_3aa->sensor_fcount, fcount + group_3aa->skip_shots);
 

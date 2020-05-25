@@ -35,7 +35,7 @@ static int exynos_fimc_is_module_pin_control(struct device *dev,
 	u32 delay = pin_ctrls->delay;
 	u32 value = pin_ctrls->value;
 	u32 voltage = pin_ctrls->voltage;
-	enum pin_act act = pin_ctrls->act;
+	u32 act = pin_ctrls->act;
 	int ret = 0;
 
 	switch (act) {
@@ -55,7 +55,6 @@ static int exynos_fimc_is_module_pin_control(struct device *dev,
 	case PIN_INPUT:
 		if (gpio_is_valid(pin)) {
 			gpio_request_one(pin, GPIOF_IN, "CAM_GPIO_INPUT");
-			usleep_range(delay, delay);
 			gpio_free(pin);
 		}
 		break;
@@ -79,14 +78,13 @@ static int exynos_fimc_is_module_pin_control(struct device *dev,
 				pr_err("pinctrl_select_state(%s) is fail(%d)\n", name, ret);
 				return ret;
 			}
-			usleep_range(delay, delay);
 		}
 		break;
 	case PIN_REGULATOR:
 		{
 			struct regulator *regulator = NULL;
 
-			regulator = regulator_get(dev, name);
+			regulator = regulator_get_optional(dev, name);
 			if (IS_ERR_OR_NULL(regulator)) {
 				pr_err("%s : regulator_get(%s) fail\n", __func__, name);
 				return PTR_ERR(regulator);
@@ -140,9 +138,9 @@ static int exynos_fimc_is_module_pin_control(struct device *dev,
 	return ret;
 }
 
-int exynos_fimc_is_module_pins_cfg(struct device *dev,
+int exynos_fimc_is_module_pins_cfg(struct fimc_is_module_enum *module,
 	u32 scenario,
-	u32 enable)
+	u32 gpio_scenario)
 {
 	int ret = 0;
 	u32 idx_max, idx;
@@ -150,32 +148,47 @@ int exynos_fimc_is_module_pins_cfg(struct device *dev,
 	struct exynos_sensor_pin (*pin_ctrls)[GPIO_SCENARIO_MAX][GPIO_CTRL_MAX];
 	struct exynos_platform_fimc_is_module *pdata;
 
-	BUG_ON(!dev);
-	BUG_ON(!dev->platform_data);
-	BUG_ON(enable >= GPIO_SCENARIO_MAX);
+	BUG_ON(!module);
+	BUG_ON(!module->pdata);
+	BUG_ON(gpio_scenario >= GPIO_SCENARIO_MAX);
 	BUG_ON(scenario > SENSOR_SCENARIO_MAX);
 
-	pdata = dev_get_platdata(dev);
+	pdata = module->pdata;
 	pinctrl = pdata->pinctrl;
 	pin_ctrls = pdata->pin_ctrls;
-	idx_max = pdata->pinctrl_index[scenario][enable];
+	idx_max = pdata->pinctrl_index[scenario][gpio_scenario];
 
 	/* print configs */
 	for (idx = 0; idx < idx_max; ++idx) {
 		printk(KERN_DEBUG "[@] pin_ctrl(act(%d), pin(%ld), val(%d), nm(%s)\n",
-			pin_ctrls[scenario][enable][idx].act,
-			(pin_ctrls[scenario][enable][idx].act == PIN_FUNCTION) ? 0 : pin_ctrls[scenario][enable][idx].pin,
-			pin_ctrls[scenario][enable][idx].value,
-			pin_ctrls[scenario][enable][idx].name);
+			pin_ctrls[scenario][gpio_scenario][idx].act,
+			(pin_ctrls[scenario][gpio_scenario][idx].act == PIN_FUNCTION) ? 0 : pin_ctrls[scenario][gpio_scenario][idx].pin,
+			pin_ctrls[scenario][gpio_scenario][idx].value,
+			pin_ctrls[scenario][gpio_scenario][idx].name);
 	}
 
 	/* do configs */
 	for (idx = 0; idx < idx_max; ++idx) {
-		ret = exynos_fimc_is_module_pin_control(dev, pinctrl, &pin_ctrls[scenario][enable][idx]);
+		ret = exynos_fimc_is_module_pin_control(module->dev, pinctrl, &pin_ctrls[scenario][gpio_scenario][idx]);
 		if (ret) {
 			pr_err("[@] exynos_fimc_is_sensor_gpio(%d) is fail(%d)", idx, ret);
 			goto p_err;
 		}
+	}
+
+	/* standy mode state check */
+	switch (gpio_scenario) {
+	case GPIO_SCENARIO_ON:
+	case GPIO_SCENARIO_OFF:
+		clear_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state);
+		break;
+	case GPIO_SCENARIO_STANDBY_ON:
+	case GPIO_SCENARIO_STANDBY_OFF:
+	case GPIO_SCENARIO_STANDBY_OFF_SENSOR:
+	case GPIO_SCENARIO_STANDBY_OFF_PREPROCESSOR:
+	case GPIO_SCENARIO_SENSOR_RETENTION_ON:
+		set_bit(FIMC_IS_MODULE_STANDBY_ON, &module->state);
+		break;
 	}
 
 p_err:
@@ -188,7 +201,7 @@ static int exynos_fimc_is_module_pin_debug(struct device *dev,
 	int ret = 0;
 	ulong pin = pin_ctrls->pin;
 	char* name = pin_ctrls->name;
-	enum pin_act act = pin_ctrls->act;
+	u32 act = pin_ctrls->act;
 
 	switch (act) {
 	case PIN_NONE:
@@ -227,7 +240,7 @@ static int exynos_fimc_is_module_pin_debug(struct device *dev,
 			struct regulator *regulator;
 			int voltage;
 
-			regulator = regulator_get(dev, name);
+			regulator = regulator_get_optional(dev, name);
 			if (IS_ERR(regulator)) {
 				pr_err("%s : regulator_get(%s) fail\n", __func__, name);
 				return PTR_ERR(regulator);
@@ -251,9 +264,9 @@ static int exynos_fimc_is_module_pin_debug(struct device *dev,
 	return ret;
 }
 
-int exynos_fimc_is_module_pins_dbg(struct device *dev,
+int exynos_fimc_is_module_pins_dbg(struct fimc_is_module_enum *module,
 	u32 scenario,
-	u32 enable)
+	u32 gpio_scenario)
 {
 	int ret = 0;
 	u32 idx_max, idx;
@@ -261,28 +274,28 @@ int exynos_fimc_is_module_pins_dbg(struct device *dev,
 	struct exynos_sensor_pin (*pin_ctrls)[GPIO_SCENARIO_MAX][GPIO_CTRL_MAX];
 	struct exynos_platform_fimc_is_module *pdata;
 
-	BUG_ON(!dev);
-	BUG_ON(!dev->platform_data);
-	BUG_ON(enable > 1);
+	BUG_ON(!module);
+	BUG_ON(!module->pdata);
+	BUG_ON(gpio_scenario > 1);
 	BUG_ON(scenario > SENSOR_SCENARIO_MAX);
 
-	pdata = dev_get_platdata(dev);
+	pdata = module->pdata;
 	pinctrl = pdata->pinctrl;
 	pin_ctrls = pdata->pin_ctrls;
-	idx_max = pdata->pinctrl_index[scenario][enable];
+	idx_max = pdata->pinctrl_index[scenario][gpio_scenario];
 
 	/* print configs */
 	for (idx = 0; idx < idx_max; ++idx) {
 		printk(KERN_DEBUG "[@] pin_ctrl(act(%d), pin(%ld), val(%d), nm(%s)\n",
-			pin_ctrls[scenario][enable][idx].act,
-			(pin_ctrls[scenario][enable][idx].act == PIN_FUNCTION) ? 0 : pin_ctrls[scenario][enable][idx].pin,
-			pin_ctrls[scenario][enable][idx].value,
-			pin_ctrls[scenario][enable][idx].name);
+			pin_ctrls[scenario][gpio_scenario][idx].act,
+			(pin_ctrls[scenario][gpio_scenario][idx].act == PIN_FUNCTION) ? 0 : pin_ctrls[scenario][gpio_scenario][idx].pin,
+			pin_ctrls[scenario][gpio_scenario][idx].value,
+			pin_ctrls[scenario][gpio_scenario][idx].name);
 	}
 
 	/* do configs */
 	for (idx = 0; idx < idx_max; ++idx) {
-		ret = exynos_fimc_is_module_pin_debug(dev, pinctrl, &pin_ctrls[scenario][enable][idx]);
+		ret = exynos_fimc_is_module_pin_debug(module->dev, pinctrl, &pin_ctrls[scenario][gpio_scenario][idx]);
 		if (ret) {
 			pr_err("[@] exynos_fimc_is_sensor_gpio(%d) is fail(%d)", idx, ret);
 			goto p_err;
